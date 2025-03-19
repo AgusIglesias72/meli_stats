@@ -2,11 +2,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
+// Asegúrate de que estas variables tengan valores
+const clientId = process.env.NEXT_PUBLIC_MERCADOLIBRE_APP_ID;
+const clientSecret = process.env.NEXT_PUBLIC_MERCADOLIBRE_SECRET_KEY;
+const redirectUri = process.env.NEXT_PUBLIC_MERCADOLIBRE_REDIRECT_URI;
+
 export async function GET(request: NextRequest) {
   try {
     // Obtener el código de autorización de la URL
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
+
+    // Verifica que no sean undefined o vacíos
+    if (!clientId || !clientSecret || !redirectUri) {
+        console.error('Missing OAuth configuration:', { 
+        hasClientId: !!clientId, 
+        hasClientSecret: !!clientSecret, 
+        hasRedirectUri: !!redirectUri 
+        });
+        return NextResponse.redirect(new URL('/auth/error?error=missing_config', request.url));
+    }
     
     if (!code) {
       return NextResponse.redirect(new URL('/auth/error?error=no_code', request.url));
