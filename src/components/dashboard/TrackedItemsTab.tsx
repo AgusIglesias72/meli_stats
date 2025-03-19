@@ -21,6 +21,7 @@ interface TrackedItem {
     permalink: string;
     thumbnail: string;
     last_updated: string;
+    brand?: string;
   } | null;
 }
 
@@ -133,7 +134,7 @@ export default function TrackedItemsTab({
                         {item.data ? (
                           <div className="mt-2 text-sm">
                             <p className="font-semibold">
-                              {formatCurrency(item.data.price, item.data.currency_id)}
+                              {formatCurrency(item.data.amount || item.data.price, item.data.currency_id)}
                             </p>
                             {item.data.regular_amount && item.data.regular_amount !== item.data.amount && (
                               <p className="text-xs line-through text-gray-500">
@@ -154,22 +155,34 @@ export default function TrackedItemsTab({
                         <span className="font-medium">Notas:</span> {item.notes}
                       </div>
                     )}
+                    {item.data && item.data.brand && (
+                      <div className="mt-2 text-xs bg-blue-50 p-2 rounded-md">
+                        <span className="font-medium">Marca:</span> {item.data.brand}
+                      </div>
+                    )}
                     
                     {item.data ? (
                       <>
-                        <div className="mt-3 text-xs text-gray-500 flex justify-between">
-                          <span>
-                            Disponible: {item.data.available_quantity}
-                          </span>
+                        <div className="mt-3 text-xs text-gray-500 flex justify-end">
                           <span>
                             <span 
                               className={`inline-block px-2 py-1 rounded-full text-[10px] ${
                                 item.data.status === 'active' 
                                   ? 'bg-green-100 text-green-800' 
+                                  : item.data.status === 'paused'
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : item.data.status === 'closed'
+                                  ? 'bg-red-100 text-red-800'
                                   : 'bg-gray-100 text-gray-800'
                               }`}
                             >
-                              {item.data.status === 'active' ? 'Activo' : item.data.status}
+                              {item.data.status === 'active' 
+                                ? 'Activo' 
+                                : item.data.status === 'paused'
+                                ? 'En Pausa'
+                                : item.data.status === 'closed'
+                                ? 'Finalizada'
+                                : item.data.status}
                             </span>
                           </span>
                         </div>

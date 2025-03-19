@@ -300,7 +300,7 @@ export default function Dashboard() {
     <div className="flex flex-col min-h-screen">
       <Header />
       <main className="flex-grow bg-zinc-50 py-8">
-        <div className="container mx-auto px-4">
+        <div className="container mx-auto px-4 max-w-7xl">
           <h1 className="text-3xl font-bold mb-6">Panel de Control</h1>
 
           <Tabs defaultValue="items" className="w-full">

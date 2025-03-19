@@ -2,101 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
-// GET: Obtiene todos los items trackeados por el usuario
-export async function GET(request: NextRequest) {
-  try {
-    // Verificar autenticación
-    const mlUserId = (await cookies()).get('ml_user_id')?.value;
-    
-    if (!mlUserId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Obtener parámetros de paginación
-    const searchParams = request.nextUrl.searchParams;
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '20');
-    const offset = (page - 1) * limit;
-
-    // Obtener el usuario desde la base de datos
-    const supabase = createServerSupabaseClient();
-    
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('user_id', mlUserId)
-      .single();
-
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    // Obtener los items trackeados y sus datos más recientes
-    const { data: trackedItems, error: itemsError, count } = await supabase
-      .from('tracked_items_config')
-      .select(`
-        id,
-        item_id,
-        notes,
-        created_at,
-        tracked_items_data (
-          id,
-          price,
-          base_price,
-          title,
-          available_quantity,
-          status,
-          thumbnail,
-          permalink,
-          regular_amount,
-          amount,
-          currency_id,
-          last_updated
-        )
-      `, { count: 'exact' })
-      .eq('user_id', userData.id)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (itemsError) {
-      console.error('Error fetching tracked items:', itemsError);
-      return NextResponse.json({ error: 'Error fetching tracked items' }, { status: 500 });
-    }
-
-    // Procesar los resultados para un formato más amigable
-    const processedItems = trackedItems.map(item => {
-      const latestData = item.tracked_items_data && item.tracked_items_data.length > 0
-        ? item.tracked_items_data[0] // Asumimos que el más reciente viene primero
-        : null;
-
-      return {
-        id: item.id,
-        item_id: item.item_id,
-        notes: item.notes,
-        created_at: item.created_at,
-        data: latestData
-      };
-    });
-
-    // Calcular información de paginación
-    const totalPages = Math.ceil((count || 0) / limit);
-
-    return NextResponse.json({
-      trackedItems: processedItems,
-      pagination: {
-        page,
-        limit,
-        totalItems: count,
-        totalPages
-      }
-    });
-  } catch (error) {
-    console.error('Error processing tracked items request:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
-
-// POST: Añade un nuevo item para trackear
+// POST: Actualiza todos los items trackeados
 export async function POST(request: NextRequest) {
   try {
     // Verificar autenticación
@@ -104,13 +10,6 @@ export async function POST(request: NextRequest) {
     
     if (!mlUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Obtener datos del cuerpo
-    const { itemId, notes } = await request.json();
-    
-    if (!itemId) {
-      return NextResponse.json({ error: 'Item ID is required' }, { status: 400 });
     }
 
     // Obtener el usuario desde la base de datos
@@ -131,169 +30,125 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Token expired, please re-authenticate' }, { status: 401 });
     }
 
-    // Comprobar si el item ya está siendo trackeado por este usuario
-    const { data: existingItem } = await supabase
+    // Obtener todos los items trackeados por el usuario
+    const { data: trackedItems, error: trackedItemsError } = await supabase
       .from('tracked_items_config')
-      .select('id')
-      .eq('user_id', userData.id)
-      .eq('item_id', itemId)
-      .single();
+      .select('id, item_id')
+      .eq('user_id', userData.id);
 
-    if (existingItem) {
-      return NextResponse.json({ 
-        error: 'Item already being tracked', 
-        itemId: existingItem.id 
-      }, { status: 409 });
+    if (trackedItemsError) {
+      console.error('Error fetching tracked items:', trackedItemsError);
+      return NextResponse.json({ error: 'Error fetching tracked items' }, { status: 500 });
     }
 
-    // Añadir el nuevo item a trackear
-    const { data: newItem, error: insertError } = await supabase
-      .from('tracked_items_config')
-      .insert({
-        user_id: userData.id,
-        item_id: itemId,
-        notes: notes || null
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      console.error('Error inserting tracked item:', insertError);
-      return NextResponse.json({ error: 'Error adding item to track' }, { status: 500 });
-    }
-
-    // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
-    // y guardarla en tracked_items_data inmediatamente
-    try {
-      const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
-        headers: {
-          'Authorization': `Bearer ${userData.access_token}`
-        }
+    if (!trackedItems || trackedItems.length === 0) {
+      return NextResponse.json({
+        success: true,
+        message: 'No tracked items to update',
+        updated: 0,
+        failed: 0
       });
+    }
 
-      if (!itemResponse.ok) {
-        console.error(`Error fetching item ${itemId}: ${itemResponse.statusText}`);
-        // Continuamos aún si hay error, al menos el tracker fue creado
-      } else {
-        const itemData = await itemResponse.json();
-
-        // Obtener información del precio de venta
-        const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
-          headers: {
-            'Authorization': `Bearer ${userData.access_token}`
-          }
-        });
-
-        let salePriceData = null;
-        if (salePriceResponse.ok) {
-          salePriceData = await salePriceResponse.json();
-        }
-
-        // Guardar los datos en tracked_items_data
-        await supabase
-          .from('tracked_items_data')
-          .insert({
-            config_id: newItem.id,
-            item_id: itemId,
-            site_id: itemData.site_id,
-            title: itemData.title,
-            seller_id: itemData.seller_id,
-            category_id: itemData.category_id,
-            official_store_id: itemData.official_store_id,
-            price: itemData.price,
-            base_price: itemData.base_price,
-            currency_id: itemData.currency_id,
-            available_quantity: itemData.available_quantity,
-            permalink: itemData.permalink,
-            thumbnail: itemData.thumbnail,
-            status: itemData.status,
-            regular_amount: salePriceData?.regular_amount || null,
-            amount: salePriceData?.amount || null,
-            last_updated: new Date().toISOString()
+    // Actualizar cada item trackeado
+    const updateResults = await Promise.allSettled(
+      trackedItems.map(async (trackedItem) => {
+        try {
+          // Obtener información del ítem de la API de Mercado Libre
+          const itemResponse = await fetch(`https://api.mercadolibre.com/items/${trackedItem.item_id}`, {
+            headers: {
+              'Authorization': `Bearer ${userData.access_token}`
+            }
           });
-      }
-    } catch (dataError) {
-      console.error('Error fetching initial data for tracked item:', dataError);
-      // Continuamos aún si hay error, al menos el tracker fue creado
-    }
+
+          if (!itemResponse.ok) {
+            throw new Error(`Error fetching item ${trackedItem.item_id}: ${itemResponse.statusText}`);
+          }
+
+          const itemData = await itemResponse.json();
+
+          // Extraer la marca de los atributos si existe
+          let brand = null;
+          if (itemData.attributes && Array.isArray(itemData.attributes)) {
+            const brandAttribute = itemData.attributes.find((attr: any) => attr.id === 'BRAND');
+            if (brandAttribute && brandAttribute.value_name) {
+              brand = brandAttribute.value_name;
+            }
+          }
+
+          // Obtener información del precio de venta
+          const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${trackedItem.item_id}/sale_price`, {
+            headers: {
+              'Authorization': `Bearer ${userData.access_token}`
+            }
+          });
+
+          let salePriceData = null;
+          if (salePriceResponse.ok) {
+            salePriceData = await salePriceResponse.json();
+          }
+
+          // Guardar los datos actualizados en tracked_items_data
+          const { error: insertError } = await supabase
+            .from('tracked_items_data')
+            .insert({
+              config_id: trackedItem.id,
+              item_id: trackedItem.item_id,
+              site_id: itemData.site_id,
+              title: itemData.title,
+              seller_id: itemData.seller_id,
+              category_id: itemData.category_id,
+              official_store_id: itemData.official_store_id,
+              price: itemData.price,
+              base_price: itemData.base_price,
+              currency_id: itemData.currency_id,
+              available_quantity: itemData.available_quantity,
+              permalink: itemData.permalink,
+              thumbnail: itemData.thumbnail,
+              status: itemData.status,
+              regular_amount: salePriceData?.regular_amount || null,
+              amount: salePriceData?.amount || null,
+              brand: brand,
+              last_updated: new Date().toISOString()
+            });
+
+          if (insertError) {
+            throw new Error(`Error inserting data for item ${trackedItem.item_id}: ${insertError.message}`);
+          }
+
+          return {
+            success: true,
+            item_id: trackedItem.item_id
+          };
+        } catch (error: any) {
+          console.error(`Error updating tracked item ${trackedItem.item_id}:`, error);
+          return {
+            success: false,
+            item_id: trackedItem.item_id,
+            error: error.message || 'Unknown error'
+          };
+        }
+      })
+    );
+
+    // Contar los éxitos y fallos
+    const successful = updateResults.filter(
+      result => result.status === 'fulfilled' && (result.value as any).success
+    ).length;
+    
+    const failed = updateResults.filter(
+      result => result.status === 'rejected' || !(result.value as any).success
+    ).length;
 
     return NextResponse.json({
       success: true,
-      message: 'Item added to tracking',
-      item: newItem
+      message: `Updated ${successful} items. Failed: ${failed}`,
+      updated: successful,
+      failed: failed,
+      total: trackedItems.length
     });
   } catch (error) {
-    console.error('Error processing add tracked item request:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
-
-// DELETE: Elimina un item trackeado
-export async function DELETE(request: NextRequest) {
-  try {
-    // Verificar autenticación
-    const mlUserId = (await cookies()).get('ml_user_id')?.value;
-    
-    if (!mlUserId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Obtener el ID del item a eliminar
-    const searchParams = request.nextUrl.searchParams;
-    const configId = searchParams.get('id');
-    
-    if (!configId) {
-      return NextResponse.json({ error: 'Tracked item ID is required' }, { status: 400 });
-    }
-
-    // Obtener el usuario desde la base de datos
-    const supabase = createServerSupabaseClient();
-    
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('user_id', mlUserId)
-      .single();
-
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    // Verificar que el item pertenece al usuario
-    const { data: trackedItem } = await supabase
-      .from('tracked_items_config')
-      .select('id')
-      .eq('id', configId)
-      .eq('user_id', userData.id)
-      .single();
-
-    if (!trackedItem) {
-      return NextResponse.json({ error: 'Item not found or not owned by user' }, { status: 404 });
-    }
-
-    // Primero, eliminar los datos asociados
-    await supabase
-      .from('tracked_items_data')
-      .delete()
-      .eq('config_id', configId);
-
-    // Luego, eliminar la configuración
-    const { error: deleteError } = await supabase
-      .from('tracked_items_config')
-      .delete()
-      .eq('id', configId);
-
-    if (deleteError) {
-      console.error('Error deleting tracked item:', deleteError);
-      return NextResponse.json({ error: 'Error removing tracked item' }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: 'Item removed from tracking'
-    });
-  } catch (error) {
-    console.error('Error processing delete tracked item request:', error);
+    console.error('Error updating tracked items:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

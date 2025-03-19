@@ -129,7 +129,7 @@ export default function ProductsTab({
                         
                         <div className="mt-2 text-sm">
                           <p className="font-semibold">
-                            {formatCurrency(item.price, item.currency_id)}
+                            {formatCurrency(item.amount || item.price, item.currency_id)}
                           </p>
                           {item.regular_amount && item.regular_amount !== item.amount && (
                             <p className="text-xs line-through text-gray-500">
