@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
         // Extraer la marca de los atributos si existe
         let brand = null;
         if (itemData.attributes && Array.isArray(itemData.attributes)) {
-          const brandAttribute = itemData.attributes.find(attr => attr.id === 'BRAND');
+          const brandAttribute = itemData.attributes.find((attr: any) => attr.id === 'BRAND'); 
           if (brandAttribute && brandAttribute.value_name) {
             brand = brandAttribute.value_name;
           }
