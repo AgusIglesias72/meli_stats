@@ -118,12 +118,17 @@ export async function POST(request: NextRequest) {
     
     const { data: userData, error: userError } = await supabase
       .from('users')
-      .select('id')
+      .select('id, access_token, token_expiry')
       .eq('user_id', mlUserId)
       .single();
 
     if (userError || !userData) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    // Verificar si el token ha expirado
+    if (new Date(userData.token_expiry) < new Date()) {
+      return NextResponse.json({ error: 'Token expired, please re-authenticate' }, { status: 401 });
     }
 
     // Comprobar si el item ya está siendo trackeado por este usuario
@@ -155,6 +160,61 @@ export async function POST(request: NextRequest) {
     if (insertError) {
       console.error('Error inserting tracked item:', insertError);
       return NextResponse.json({ error: 'Error adding item to track' }, { status: 500 });
+    }
+
+    // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
+    // y guardarla en tracked_items_data inmediatamente
+    try {
+      const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
+        headers: {
+          'Authorization': `Bearer ${userData.access_token}`
+        }
+      });
+
+      if (!itemResponse.ok) {
+        console.error(`Error fetching item ${itemId}: ${itemResponse.statusText}`);
+        // Continuamos aún si hay error, al menos el tracker fue creado
+      } else {
+        const itemData = await itemResponse.json();
+
+        // Obtener información del precio de venta
+        const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
+          headers: {
+            'Authorization': `Bearer ${userData.access_token}`
+          }
+        });
+
+        let salePriceData = null;
+        if (salePriceResponse.ok) {
+          salePriceData = await salePriceResponse.json();
+        }
+
+        // Guardar los datos en tracked_items_data
+        await supabase
+          .from('tracked_items_data')
+          .insert({
+            config_id: newItem.id,
+            item_id: itemId,
+            site_id: itemData.site_id,
+            title: itemData.title,
+            seller_id: itemData.seller_id,
+            category_id: itemData.category_id,
+            official_store_id: itemData.official_store_id,
+            price: itemData.price,
+            base_price: itemData.base_price,
+            currency_id: itemData.currency_id,
+            available_quantity: itemData.available_quantity,
+            permalink: itemData.permalink,
+            thumbnail: itemData.thumbnail,
+            status: itemData.status,
+            regular_amount: salePriceData?.regular_amount || null,
+            amount: salePriceData?.amount || null,
+            last_updated: new Date().toISOString()
+          });
+      }
+    } catch (dataError) {
+      console.error('Error fetching initial data for tracked item:', dataError);
+      // Continuamos aún si hay error, al menos el tracker fue creado
     }
 
     return NextResponse.json({
