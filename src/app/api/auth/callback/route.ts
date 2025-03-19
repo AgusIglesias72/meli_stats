@@ -36,10 +36,10 @@ export async function GET(request: NextRequest) {
       },
       body: new URLSearchParams({
         grant_type: 'authorization_code',
-        client_id: process.env.MERCADOLIBRE_APP_ID || '',
-        client_secret: process.env.MERCADOLIBRE_SECRET_KEY || '',
+        client_id: clientId || '',
+        client_secret: clientSecret || '',
         code,
-        redirect_uri: process.env.MERCADOLIBRE_REDIRECT_URI || ''
+        redirect_uri: redirectUri || ''
       })
     });
 
