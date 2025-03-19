@@ -185,7 +185,7 @@ export default function Dashboard() {
   const trackItem = async () => {
     if (!trackItemIdInput.trim()) {
       setTrackedError('Por favor, introduce un ID de ítem válido');
-      return;
+      return Promise.reject(new Error('ID de ítem vacío'));
     }
 
     try {
@@ -212,9 +212,13 @@ export default function Dashboard() {
       await loadTrackedItems();
       setTrackItemIdInput('');
       setTrackItemNotes('');
+      
+      // Retornamos promesa exitosa
+      return Promise.resolve();
     } catch (err: any) {
       setTrackedError(err.message || 'Ocurrió un error al agregar el ítem para trackear');
       console.error('Error tracking item:', err);
+      return Promise.reject(err);
     } finally {
       setTrackingItem(false);
     }

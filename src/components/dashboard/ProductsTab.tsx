@@ -147,12 +147,11 @@ export default function ProductsTab({
                       <span>
                         <span 
                           className={`inline-block px-2 py-1 rounded-full text-[10px] ${
-                            item.status === 'active' 
-                              ? 'bg-green-100 text-green-800' 
-                              : 'bg-gray-100 text-gray-800'
+                            item.status === 'active' ? 'bg-green-100 text-green-800' : item.status === 'closed' ? 'bg-red-100 text-red-800' : item.status === 'paused' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'
+
                           }`}
                         >
-                          {item.status === 'active' ? 'Activo' : item.status}
+                          {item.status === 'active' ? 'Activo' : item.status === 'closed' ? 'Finalizado' : item.status === 'paused' ? 'Pausado' : 'Desconocido'}
                         </span>
                       </span>
                     </div>
