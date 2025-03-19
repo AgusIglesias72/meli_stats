@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import ProductsTab from '@/components/dashboard/ProductsTab';
 import TrackedItemsTab from '@/components/dashboard/TrackedItemsTab';
 import AddTrackerTab from '@/components/dashboard/AddTrackerTab';
+import SheetsIntegrationTab from '@/components/dashboard/SheetsIntegrationTab';
 
 interface Item {
   id: string;
@@ -80,6 +81,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [autoImportMessage, setAutoImportMessage] = useState<string | null>(null);
   const [trackedError, setTrackedError] = useState<string | null>(null);
+  const [mlUserId, setMlUserId] = useState('');
 
   // Cargar los items al iniciar
   useEffect(() => {
@@ -90,6 +92,22 @@ export default function Dashboard() {
   useEffect(() => {
     loadTrackedItems();
   }, [trackedPagination.page]);
+
+  useEffect(() => {
+    async function fetchUserInfo() {
+      try {
+        const response = await fetch('/api/user/info');
+        if (response.ok) {
+          const data = await response.json();
+          setMlUserId(data.user_id || '');
+        }
+      } catch (error) {
+        console.error('Error fetching user info:', error);
+      }
+    }
+    
+    fetchUserInfo();
+  }, []);
 
   const loadItems = async () => {
     try {
@@ -313,6 +331,7 @@ export default function Dashboard() {
               <TabsTrigger value="items">Mis Productos</TabsTrigger>
               <TabsTrigger value="tracked">Productos Trackeados</TabsTrigger>
               <TabsTrigger value="track">Agregar Tracker</TabsTrigger>
+              <TabsTrigger value="sheets">Google Sheets</TabsTrigger>
             </TabsList>
 
             <TabsContent value="items">
@@ -357,6 +376,10 @@ export default function Dashboard() {
                 setTrackItemNotes={setTrackItemNotes}
                 trackItem={trackItem}
               />
+            </TabsContent>
+            
+            <TabsContent value="sheets">
+              <SheetsIntegrationTab mlUserId={mlUserId} />
             </TabsContent>
           </Tabs>
         </div>
