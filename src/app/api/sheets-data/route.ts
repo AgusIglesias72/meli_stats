@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 
     // Obtener tipos de datos solicitados (items, tracked_items o ambos)
     const dataType = searchParams.get('type') || 'all';
-    let response: any = { user_id: mlUserId };
+    const response: any = { user_id: mlUserId };
 
     // Obtener items del usuario si se solicitan
     if (dataType === 'all' || dataType === 'items') {
