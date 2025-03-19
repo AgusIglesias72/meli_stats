@@ -2,9 +2,6 @@
     "framework": "nextjs",
     "buildCommand": "next build",
     "devCommand": "next dev",
-    "installCommand": "npm install",
-    "images": {
-      "domains": ["source.unsplash.com", "images.unsplash.com", "ext.same-assets.com", "ugc.same-assets.com"],
-      "formats": ["image/avif", "image/webp"]
-    }
+    "installCommand": "npm install"
+   
   }
