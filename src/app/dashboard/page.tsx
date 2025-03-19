@@ -22,6 +22,7 @@ interface Item {
   status: string;
   permalink: string;
   thumbnail: string;
+  category_id: string;
   last_updated: string;
 }
 

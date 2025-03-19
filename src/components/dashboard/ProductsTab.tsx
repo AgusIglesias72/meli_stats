@@ -1,7 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Download, Loader2, RefreshCw } from 'lucide-react';
+import ProductCard from './ProductCard';
+import FilterSortControls, { SortField, SortDirection, StatusFilter } from './FilterSortControls';
+
+interface Category {
+  id: string;
+  name: string;
+}
 
 interface Item {
   id: string;
@@ -16,6 +22,7 @@ interface Item {
   status: string;
   permalink: string;
   thumbnail: string;
+  category_id: string;
   last_updated: string;
 }
 
@@ -53,6 +60,91 @@ export default function ProductsTab({
   formatCurrency,
   formatDate
 }: ProductsTabProps) {
+  // Estado para filtrado y ordenamiento
+  const [sortField, setSortField] = useState<SortField>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Extraer categorías únicas de los items
+  const categories = useMemo(() => {
+    const uniqueCategories = new Map<string, Category>();
+    
+    items.forEach(item => {
+      if (item.category_id && !uniqueCategories.has(item.category_id)) {
+        uniqueCategories.set(item.category_id, {
+          id: item.category_id,
+          name: item.category_id // Idealmente esto sería el nombre de la categoría
+        });
+      }
+    });
+    
+    return Array.from(uniqueCategories.values());
+  }, [items]);
+
+  // Filtrar y ordenar items
+  const filteredAndSortedItems = useMemo(() => {
+    // Primero filtramos
+    let result = [...items];
+    
+    if (statusFilter !== 'all') {
+      result = result.filter(item => item.status === statusFilter);
+    }
+    
+    if (categoryFilter) {
+      result = result.filter(item => item.category_id === categoryFilter);
+    }
+    
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(item => 
+        item.title.toLowerCase().includes(query) || 
+        item.item_id.toLowerCase().includes(query)
+      );
+    }
+    
+    // Luego ordenamos
+    if (sortField) {
+      result.sort((a, b) => {
+        let valueA, valueB;
+        
+        switch (sortField) {
+          case 'title':
+            valueA = a.title.toLowerCase();
+            valueB = b.title.toLowerCase();
+            break;
+          case 'price':
+            valueA = a.amount || a.price;
+            valueB = b.amount || b.price;
+            break;
+          case 'date':
+            valueA = new Date(a.last_updated).getTime();
+            valueB = new Date(b.last_updated).getTime();
+            break;
+          default:
+            return 0;
+        }
+        
+        if (valueA < valueB) {
+          return sortDirection === 'asc' ? -1 : 1;
+        }
+        if (valueA > valueB) {
+          return sortDirection === 'asc' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    
+    return result;
+  }, [items, sortField, sortDirection, statusFilter, categoryFilter, searchQuery]);
+
+  // Cambiar ordenamiento
+  const handleSortChange = (field: SortField, direction: SortDirection) => {
+    setSortField(field);
+    setSortDirection(direction);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center mb-4">
@@ -98,79 +190,63 @@ export default function ProductsTab({
         </div>
       )}
 
+      {/* Controles de filtrado y ordenamiento */}
+      <FilterSortControls
+        sortField={sortField}
+        sortDirection={sortDirection}
+        statusFilter={statusFilter}
+        categoryFilter={categoryFilter}
+        searchQuery={searchQuery}
+        onSortChange={handleSortChange}
+        onStatusFilterChange={setStatusFilter}
+        onCategoryFilterChange={setCategoryFilter}
+        onSearchQueryChange={setSearchQuery}
+        categories={categories}
+      />
+      
+      {/* Indicación de filtros activos */}
+      {(statusFilter !== 'all' || categoryFilter || searchQuery || sortField) && (
+        <div className="bg-blue-50 p-2 rounded text-xs text-blue-800">
+          Filtros activos: 
+          {statusFilter !== 'all' && ` Estado: ${statusFilter}`}
+          {categoryFilter && ` Categoría: ${categoryFilter}`}
+          {searchQuery && ` Búsqueda: "${searchQuery}"`}
+          {sortField && ` Ordenado por: ${sortField} (${sortDirection})`}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center items-center h-40">
           <Loader2 className="h-8 w-8 animate-spin text-uicore-green" />
         </div>
-      ) : items.length === 0 ? (
+      ) : filteredAndSortedItems.length === 0 ? (
         <div className="text-center p-8 bg-white rounded-lg shadow">
           <p className="text-gray-500">
-            No tienes productos guardados. Utiliza el botón "Auto Importar" para cargar tus productos automáticamente.
+            {items.length === 0 
+              ? "No tienes productos guardados. Utiliza el botón \"Auto Importar\" para cargar tus productos automáticamente."
+              : "No se encontraron productos con los filtros aplicados."}
           </p>
         </div>
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {items.map((item) => (
-              <Card key={item.id} className="overflow-hidden">
-                <CardContent className="p-0">
-                  <div className="p-4">
-                    <div className="flex items-start space-x-4">
-                      <div className="w-16 h-16 shrink-0">
-                        <img 
-                          src={item.thumbnail} 
-                          alt={item.title}
-                          className="w-full h-full object-contain rounded-md" 
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-sm font-medium truncate">{item.title}</h3>
-                        <p className="text-xs text-gray-500">ID: {item.item_id}</p>
-                        
-                        <div className="mt-2 text-sm">
-                          <p className="font-semibold">
-                            {formatCurrency(item.amount || item.price, item.currency_id)}
-                          </p>
-                          {item.regular_amount && item.regular_amount !== item.amount && (
-                            <p className="text-xs line-through text-gray-500">
-                              {formatCurrency(item.regular_amount, item.currency_id)}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-3 text-xs text-gray-500 flex justify-between">
-                      <span>
-                        Disponible: {item.available_quantity}
-                      </span>
-                      <span>
-                        <span 
-                          className={`inline-block px-2 py-1 rounded-full text-[10px] ${
-                            item.status === 'active' ? 'bg-green-100 text-green-800' : item.status === 'closed' ? 'bg-red-100 text-red-800' : item.status === 'paused' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'
-
-                          }`}
-                        >
-                          {item.status === 'active' ? 'Activo' : item.status === 'closed' ? 'Finalizado' : item.status === 'paused' ? 'Pausado' : 'Desconocido'}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="mt-2 text-xs text-gray-500">
-                      Actualizado: {formatDate(item.last_updated)}
-                    </div>
-                  </div>
-                  <div className="border-t">
-                    <a 
-                      href={item.permalink} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="block text-center py-2 text-sm text-uicore-green hover:bg-gray-50 transition-colors"
-                    >
-                      Ver en Mercado Libre
-                    </a>
-                  </div>
-                </CardContent>
-              </Card>
+            {filteredAndSortedItems.map((item) => (
+              <ProductCard
+                key={item.id}
+                id={item.id}
+                item_id={item.item_id}
+                title={item.title}
+                price={item.price}
+                regular_amount={item.regular_amount}
+                amount={item.amount}
+                currency_id={item.currency_id}
+                thumbnail={item.thumbnail}
+                permalink={item.permalink}
+                status={item.status}
+                last_updated={item.last_updated}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+              />
             ))}
           </div>
 

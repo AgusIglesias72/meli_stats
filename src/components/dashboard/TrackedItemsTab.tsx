@@ -1,7 +1,13 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
+import ProductCard from './ProductCard';
+import FilterSortControls, { SortField, SortDirection, StatusFilter } from './FilterSortControls';
+
+interface Category {
+  id: string;
+  name: string;
+}
 
 interface TrackedItem {
   id: string;
@@ -20,8 +26,9 @@ interface TrackedItem {
     status: string;
     permalink: string;
     thumbnail: string;
-    last_updated: string;
+    category_id?: string;
     brand?: string;
+    last_updated: string;
   } | null;
 }
 
@@ -59,6 +66,92 @@ export default function TrackedItemsTab({
   formatCurrency,
   formatDate
 }: TrackedItemsTabProps) {
+  // Estado para filtrado y ordenamiento
+  const [sortField, setSortField] = useState<SortField>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Extraer categorías únicas de los items
+  const categories = useMemo(() => {
+    const uniqueCategories = new Map<string, Category>();
+    
+    trackedItems.forEach(item => {
+      if (item.data?.category_id && !uniqueCategories.has(item.data.category_id)) {
+        uniqueCategories.set(item.data.category_id, {
+          id: item.data.category_id,
+          name: item.data.category_id // Idealmente esto sería el nombre de la categoría
+        });
+      }
+    });
+    
+    return Array.from(uniqueCategories.values());
+  }, [trackedItems]);
+
+  // Filtrar y ordenar items
+  const filteredAndSortedItems = useMemo(() => {
+    // Primero filtramos
+    let result = [...trackedItems];
+    
+    if (statusFilter !== 'all') {
+      result = result.filter(item => item.data?.status === statusFilter);
+    }
+    
+    if (categoryFilter) {
+      result = result.filter(item => item.data?.category_id === categoryFilter);
+    }
+    
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(item => 
+        (item.data?.title?.toLowerCase().includes(query)) || 
+        item.item_id.toLowerCase().includes(query) ||
+        (item.notes?.toLowerCase().includes(query))
+      );
+    }
+    
+    // Luego ordenamos
+    if (sortField) {
+      result.sort((a, b) => {
+        let valueA, valueB;
+        
+        switch (sortField) {
+          case 'title':
+            valueA = a.data?.title?.toLowerCase() || '';
+            valueB = b.data?.title?.toLowerCase() || '';
+            break;
+          case 'price':
+            valueA = a.data?.amount || a.data?.price || 0;
+            valueB = b.data?.amount || b.data?.price || 0;
+            break;
+          case 'date':
+            valueA = a.data ? new Date(a.data.last_updated).getTime() : 0;
+            valueB = b.data ? new Date(b.data.last_updated).getTime() : 0;
+            break;
+          default:
+            return 0;
+        }
+        
+        if (valueA < valueB) {
+          return sortDirection === 'asc' ? -1 : 1;
+        }
+        if (valueA > valueB) {
+          return sortDirection === 'asc' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    
+    return result;
+  }, [trackedItems, sortField, sortDirection, statusFilter, categoryFilter, searchQuery]);
+
+  // Cambiar ordenamiento
+  const handleSortChange = (field: SortField, direction: SortDirection) => {
+    setSortField(field);
+    setSortDirection(direction);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center mb-4">
@@ -94,136 +187,66 @@ export default function TrackedItemsTab({
         </div>
       )}
 
+      {/* Controles de filtrado y ordenamiento */}
+      <FilterSortControls
+        sortField={sortField}
+        sortDirection={sortDirection}
+        statusFilter={statusFilter}
+        categoryFilter={categoryFilter}
+        searchQuery={searchQuery}
+        onSortChange={handleSortChange}
+        onStatusFilterChange={setStatusFilter}
+        onCategoryFilterChange={setCategoryFilter}
+        onSearchQueryChange={setSearchQuery}
+        categories={categories}
+      />
+      
+      {/* Indicación de filtros activos para debug */}
+      {(statusFilter !== 'all' || categoryFilter || searchQuery || sortField) && (
+        <div className="bg-blue-50 p-2 rounded text-xs text-blue-800">
+          Filtros activos: 
+          {statusFilter !== 'all' && ` Estado: ${statusFilter}`}
+          {categoryFilter && ` Categoría: ${categoryFilter}`}
+          {searchQuery && ` Búsqueda: "${searchQuery}"`}
+          {sortField && ` Ordenado por: ${sortField} (${sortDirection})`}
+        </div>
+      )}
+
       {loadingTracked ? (
         <div className="flex justify-center items-center h-40">
           <Loader2 className="h-8 w-8 animate-spin text-uicore-green" />
         </div>
-      ) : trackedItems.length === 0 ? (
+      ) : filteredAndSortedItems.length === 0 ? (
         <div className="text-center p-8 bg-white rounded-lg shadow">
           <p className="text-gray-500">
-            No tienes productos trackeados. Agrega tu primer producto para trackear usando la pestaña "Agregar Tracker".
+            {trackedItems.length === 0 
+              ? "No tienes productos trackeados. Agrega tu primer producto para trackear usando la pestaña \"Agregar Tracker\"."
+              : "No se encontraron productos con los filtros aplicados."}
           </p>
         </div>
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {trackedItems.map((item) => (
-              <Card key={item.id} className="overflow-hidden">
-                <CardContent className="p-0">
-                  <div className="p-4">
-                    <div className="flex items-start space-x-4">
-                      <div className="w-16 h-16 shrink-0">
-                        {item.data?.thumbnail ? (
-                          <img 
-                            src={item.data.thumbnail} 
-                            alt={item.data.title || 'Sin datos'}
-                            className="w-full h-full object-contain rounded-md" 
-                          />
-                        ) : (
-                          <div className="w-full h-full bg-gray-100 flex items-center justify-center rounded-md">
-                            <span className="text-xs text-gray-400">Sin imagen</span>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-sm font-medium truncate">
-                          {item.data?.title || 'Datos no disponibles'}
-                        </h3>
-                        <p className="text-xs text-gray-500">ID: {item.item_id}</p>
-                        
-                        {item.data ? (
-                          <div className="mt-2 text-sm">
-                            <p className="font-semibold">
-                              {formatCurrency(item.data.amount || item.data.price, item.data.currency_id)}
-                            </p>
-                            {item.data.regular_amount && item.data.regular_amount !== item.data.amount && (
-                              <p className="text-xs line-through text-gray-500">
-                                {formatCurrency(item.data.regular_amount, item.data.currency_id)}
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="mt-2 text-xs text-gray-500">
-                            Sin datos actualizados
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {item.notes && (
-                      <div className="mt-2 text-xs bg-gray-50 p-2 rounded-md">
-                        <span className="font-medium">Notas:</span> {item.notes}
-                      </div>
-                    )}
-                    {item.data && item.data.brand && (
-                      <div className="mt-2 text-xs bg-blue-50 p-2 rounded-md">
-                        <span className="font-medium">Marca:</span> {item.data.brand}
-                      </div>
-                    )}
-                    
-                    {item.data ? (
-                      <>
-                        <div className="mt-3 text-xs text-gray-500 flex justify-end">
-                          <span>
-                            <span 
-                              className={`inline-block px-2 py-1 rounded-full text-[10px] ${
-                                item.data.status === 'active' 
-                                  ? 'bg-green-100 text-green-800' 
-                                  : item.data.status === 'paused'
-                                  ? 'bg-yellow-100 text-yellow-800'
-                                  : item.data.status === 'closed'
-                                  ? 'bg-red-100 text-red-800'
-                                  : 'bg-gray-100 text-gray-800'
-                              }`}
-                            >
-                              {item.data.status === 'active' 
-                                ? 'Activo' 
-                                : item.data.status === 'paused'
-                                ? 'En Pausa'
-                                : item.data.status === 'closed'
-                                ? 'Finalizada'
-                                : item.data.status}
-                            </span>
-                          </span>
-                        </div>
-                        <div className="mt-2 text-xs text-gray-500">
-                          Actualizado: {formatDate(item.data.last_updated)}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="mt-3 text-xs text-gray-500">
-                        <Button 
-                          size="sm" 
-                          className="w-full text-xs bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
-                          onClick={() => updateAllTrackedItems()}
-                          disabled={updatingTrackedItems}
-                        >
-                          Actualizar datos
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="border-t flex">
-                    {item.data?.permalink && (
-                      <a 
-                        href={item.data.permalink} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="flex-1 block text-center py-2 text-sm text-uicore-green hover:bg-gray-50 transition-colors"
-                      >
-                        Ver en ML
-                      </a>
-                    )}
-                    <button 
-                      onClick={() => removeTrackedItem(item.id)}
-                      className="flex-1 flex justify-center items-center py-2 text-sm text-red-600 hover:bg-red-50 transition-colors border-l"
-                    >
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Eliminar
-                    </button>
-                  </div>
-                </CardContent>
-              </Card>
+            {filteredAndSortedItems.map((item) => (
+              <ProductCard
+                key={item.id}
+                id={item.id}
+                item_id={item.item_id}
+                title={item.data?.title || 'Datos no disponibles'}
+                price={item.data?.price || 0}
+                regular_amount={item.data?.regular_amount || null}
+                amount={item.data?.amount || null}
+                currency_id={item.data?.currency_id || 'ARS'}
+                thumbnail={item.data?.thumbnail || ''}
+                permalink={item.data?.permalink || '#'}
+                status={item.data?.status || 'unknown'}
+                last_updated={item.data?.last_updated || item.created_at}
+                notes={item.notes}
+                brand={item.data?.brand}
+                onRemove={removeTrackedItem}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+              />
             ))}
           </div>
 
