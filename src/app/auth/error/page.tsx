@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,8 @@ const errorMessages: Record<string, string> = {
   'server_error': 'Ocurrió un error en el servidor durante el proceso de autenticación.',
 };
 
-export default function AuthErrorPage() {
+// Componente interno que usa useSearchParams
+function AuthErrorContent() {
   const searchParams = useSearchParams();
   const [errorMessage, setErrorMessage] = useState<string>('');
   
@@ -29,47 +30,68 @@ export default function AuthErrorPage() {
   }, [searchParams]);
 
   return (
+    <div className="container max-w-md mx-auto p-6">
+      <div className="bg-white rounded-xl shadow-md p-8 text-center">
+        <svg 
+          xmlns="http://www.w3.org/2000/svg" 
+          className="h-12 w-12 mx-auto text-red-500 mb-4" 
+          fill="none" 
+          viewBox="0 0 24 24" 
+          stroke="currentColor"
+        >
+          <path 
+            strokeLinecap="round" 
+            strokeLinejoin="round" 
+            strokeWidth={2} 
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" 
+          />
+        </svg>
+        
+        <h1 className="text-2xl font-bold mb-4">Error de autenticación</h1>
+        
+        <p className="text-gray-600 mb-6">
+          {errorMessage}
+        </p>
+        
+        <div className="space-y-3">
+          <Button asChild className="w-full bg-uicore-green hover:bg-uicore-green/90 text-white">
+            <Link href="/login">
+              Volver a intentar
+            </Link>
+          </Button>
+          
+          <Button asChild variant="outline" className="w-full">
+            <Link href="/">
+              Volver al inicio
+            </Link>
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Componente principal que envuelve el contenido en Suspense
+export default function AuthErrorPage() {
+  return (
     <div className="flex flex-col min-h-screen">
       <Header />
       <main className="flex-grow flex items-center justify-center bg-zinc-50">
-        <div className="container max-w-md mx-auto p-6">
-          <div className="bg-white rounded-xl shadow-md p-8 text-center">
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              className="h-12 w-12 mx-auto text-red-500 mb-4" 
-              fill="none" 
-              viewBox="0 0 24 24" 
-              stroke="currentColor"
-            >
-              <path 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                strokeWidth={2} 
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" 
-              />
-            </svg>
-            
-            <h1 className="text-2xl font-bold mb-4">Error de autenticación</h1>
-            
-            <p className="text-gray-600 mb-6">
-              {errorMessage}
-            </p>
-            
-            <div className="space-y-3">
-              <Button asChild className="w-full bg-uicore-green hover:bg-uicore-green/90 text-white">
-                <Link href="/login">
-                  Volver a intentar
-                </Link>
-              </Button>
-              
-              <Button asChild variant="outline" className="w-full">
-                <Link href="/">
-                  Volver al inicio
-                </Link>
-              </Button>
+        <Suspense fallback={
+          <div className="container max-w-md mx-auto p-6">
+            <div className="bg-white rounded-xl shadow-md p-8 text-center">
+              <div className="animate-pulse">
+                <div className="h-12 w-12 mx-auto bg-gray-200 rounded-full mb-4"></div>
+                <div className="h-6 bg-gray-200 rounded w-3/4 mx-auto mb-4"></div>
+                <div className="h-4 bg-gray-200 rounded w-full mb-6"></div>
+                <div className="h-10 bg-gray-200 rounded w-full mb-3"></div>
+                <div className="h-10 bg-gray-200 rounded w-full"></div>
+              </div>
             </div>
           </div>
-        </div>
+        }>
+          <AuthErrorContent />
+        </Suspense>
       </main>
       <Footer />
     </div>
