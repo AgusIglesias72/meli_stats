@@ -5,11 +5,10 @@ import { cookies } from 'next/headers';
 
 export async function POST(
     request: NextRequest,
-  { params }: { params: { id: string } }
-
+    context: { params: { id: string } }
 ) {
   try {
-    const invitationId = params.id;
+    const invitationId = context.params.id;
     
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
