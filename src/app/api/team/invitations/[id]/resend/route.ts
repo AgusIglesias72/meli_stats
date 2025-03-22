@@ -3,9 +3,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
+type RouteContext = {
+  params: {
+    id: string;
+  };
+};
+
 export async function POST(
     request: NextRequest,
-    context: { params: { id: string } }
+    context: RouteContext
 ) {
   try {
     const invitationId = context.params.id;
