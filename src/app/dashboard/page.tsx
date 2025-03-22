@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import ProductsTab from '@/components/dashboard/ProductsTab';
 import TrackedItemsTab from '@/components/dashboard/TrackedItemsTab';
 import AddTrackerTab from '@/components/dashboard/AddTrackerTab';
+import BulkImportTab from '@/components/dashboard/BulkImportTracker';
 import SheetsIntegrationTab from '@/components/dashboard/SheetsIntegrationTab';
 import { Loader2 } from 'lucide-react';
 
@@ -45,6 +46,7 @@ interface TrackedItem {
     status: string;
     permalink: string;
     thumbnail: string;
+    category_id?: string;
     last_updated: string;
   } | null;
 }
@@ -88,6 +90,9 @@ export default function Dashboard() {
     name: string;
     store_id: string;
   } | null>(null);
+  
+  // Estado para la pestaña activa
+  const [activeTab, setActiveTab] = useState('items');
 
   // Cargar los items al iniciar
   useEffect(() => {
@@ -350,11 +355,12 @@ export default function Dashboard() {
         <div className="container mx-auto px-4 max-w-7xl">
           <h1 className="text-3xl font-bold mb-6">Panel de Control</h1>
 
-          <Tabs defaultValue="items" className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="mb-6">
               <TabsTrigger value="items">Mis Productos</TabsTrigger>
               <TabsTrigger value="tracked">Productos Trackeados</TabsTrigger>
               <TabsTrigger value="track">Agregar Tracker</TabsTrigger>
+              <TabsTrigger value="bulk-import">Importación Masiva</TabsTrigger>
               <TabsTrigger value="sheets">Google Sheets</TabsTrigger>
             </TabsList>
 
@@ -399,6 +405,12 @@ export default function Dashboard() {
                 setTrackItemIdInput={setTrackItemIdInput}
                 setTrackItemNotes={setTrackItemNotes}
                 trackItem={trackItem}
+              />
+            </TabsContent>
+            
+            <TabsContent value="bulk-import">
+              <BulkImportTab 
+                onImportComplete={loadTrackedItems}
               />
             </TabsContent>
             

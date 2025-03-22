@@ -99,9 +99,15 @@ export default function Header() {
       active: pathname === '/templates'
     },
     {
-      title: 'Pricing',
-      href: '/pricing',
-      active: pathname === '/pricing'
+      title: 'Integrations',
+      href: '/integrations',
+      active: pathname === '/integrations',
+      subItems: [
+        {
+          title: 'Google Sheets',
+          href: '/integrations/google-sheets',
+        }     
+      ],
     }
   ];
   
