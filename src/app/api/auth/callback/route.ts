@@ -105,6 +105,7 @@ export async function GET(request: NextRequest) {
             nickname: userData.nickname,
             first_name: userData.first_name || '',
             last_name: userData.last_name || '',
+            identification: identificationNumber  || '',
             created_at: new Date().toISOString()
           })
           .select()
@@ -136,10 +137,6 @@ export async function GET(request: NextRequest) {
           access_token: mlData.access_token,
           refresh_token: mlData.refresh_token,
           token_expiry: expiryDate.toISOString(),
-          seller_first_name: firstName,
-          seller_last_name: lastName,
-          seller_email: email,
-          seller_identification_number: identificationNumber,
           updated_at: new Date().toISOString()
         })
         .eq('id', existingStore[0].id)
@@ -187,10 +184,6 @@ export async function GET(request: NextRequest) {
           access_token: mlData.access_token,
           refresh_token: mlData.refresh_token,
           token_expiry: expiryDate.toISOString(),
-          seller_first_name: firstName,
-          seller_last_name: lastName,
-          seller_email: email,
-          seller_identification_number: identificationNumber
         })
         .select()
         .single();
