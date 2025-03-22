@@ -118,6 +118,24 @@ export async function POST(request: NextRequest) {
       console.error('Error fetching store info:', storeError);
     }
 
+    // Establecer esta tienda como la seleccionada actualmente
+    (await cookies()).set('selected_store_id', invitation.store_id, {
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7, // 7 días
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production'
+    });
+  
+    // Establecer el ML user ID para esta tienda
+    if (storeInfo?.store_id) {
+      (await cookies()).set('ml_user_id', storeInfo.store_id, {
+        path: '/',
+        maxAge: 60 * 60 * 24 * 7, // 7 días
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production'
+      });
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Invitation accepted successfully',

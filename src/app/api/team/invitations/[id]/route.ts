@@ -6,10 +6,10 @@ import { cookies } from 'next/headers';
 // DELETE: Cancela una invitación pendiente
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
-    const invitationId = (await params).id;
+    const invitationId = params.id;
     
     
     // Verificar autenticación

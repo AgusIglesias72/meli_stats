@@ -1,3 +1,5 @@
+// Se podría eliminar este archivo, ya que se está usando el componente de la página de invitaciones
+
 // src/components/dashboard/TeamManagementTab.tsx
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
