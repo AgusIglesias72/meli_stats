@@ -21,11 +21,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL('/auth/error?error=no_code', request.url));
     }
 
-    // Intentar obtener el ID de usuario de la cookie (podría estar o no)
-    const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
-    // Si no hay un auth_user_id, continuamos de todas formas porque lo vamos a crear en esta función
-
     // Obtener tokens de Mercado Libre
     const mlResponse = await fetch('https://api.mercadolibre.com/oauth/token', {
       method: 'POST',
@@ -48,7 +43,6 @@ export async function GET(request: NextRequest) {
     }
 
     const mlData = await mlResponse.json();
-    console.log('ML OAuth response:', mlData);
     
     // Obtener información del usuario de Mercado Libre
     const userResponse = await fetch('https://api.mercadolibre.com/users/me', {
@@ -63,41 +57,46 @@ export async function GET(request: NextRequest) {
     }
 
     const userData = await userResponse.json();
-    console.log('ML User data:', userData);
 
     // Calcular la fecha de expiración del token
     const expiryDate = new Date();
     expiryDate.setSeconds(expiryDate.getSeconds() + mlData.expires_in);
 
-    // Extraer los datos adicionales del usuario
-    const firstName = userData.first_name || '';
-    const lastName = userData.last_name || '';
-    const email = userData.email || '';
-    
-    // Extraer el número de identificación
-    let identificationNumber = '';
-    if (userData.identification && userData.identification.number) {
-      identificationNumber = userData.identification.number;
-    }
-
     // Crear conexión a Supabase
     const supabase = createServerSupabaseClient();
     
-    // Verificar si el usuario ya existe en nuestra base de datos
-    let userId = authUserId;
-    if (!userId) {
-      // Buscar si ya existe un usuario con este ID
+    // Determinar si estamos en flujo de login o conexión de tienda adicional
+    const authUserId = (await cookies()).get('auth_user_id')?.value;
+    
+    let userId;
+    
+    if (authUserId) {
+      // El usuario ya está autenticado, estamos conectando una tienda adicional
+      userId = authUserId;
+    } else {
+      // Flujo de login/registro - buscar o crear usuario
       const { data: existingUser } = await supabase
         .from('users')
-        .select('user_id')
+        .select('id')
         .eq('user_id', userData.id)
-        .limit(1);
+        .single();
         
-      if (existingUser && existingUser.length > 0) {
-        // Si el usuario ya existe, usamos su ID
-        userId = existingUser[0].user_id;
+      if (existingUser) {
+        // Usuario existe, actualizar sus datos
+        userId = existingUser.id;
+        await supabase
+          .from('users')
+          .update({
+            email: userData.email,
+            nickname: userData.nickname,
+            first_name: userData.first_name || '',
+            last_name: userData.last_name || '',
+            identification: userData.identification?.number || '',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', userId);
       } else {
-        // Si no existe, creamos un nuevo usuario
+        // Crear nuevo usuario
         const { data: newUser, error: userError } = await supabase
           .from('users')
           .insert({
@@ -106,7 +105,7 @@ export async function GET(request: NextRequest) {
             nickname: userData.nickname,
             first_name: userData.first_name || '',
             last_name: userData.last_name || '',
-            identification: identificationNumber  || '',
+            identification: userData.identification?.number || '',
             created_at: new Date().toISOString()
           })
           .select()
@@ -126,21 +125,22 @@ export async function GET(request: NextRequest) {
       .from('stores')
       .select('id')
       .eq('store_id', userData.id)
-      .limit(1);
+      .single();
       
     let storeId;
     
-    if (existingStore && existingStore.length > 0) {
-      // Si la tienda ya existe, actualizarla
+    if (existingStore) {
+      // Actualizar tienda existente
       const { data: updatedStore, error: updateError } = await supabase
         .from('stores')
         .update({
+          name: userData.nickname || `Tienda ${userData.id}`,
           access_token: mlData.access_token,
           refresh_token: mlData.refresh_token,
           token_expiry: expiryDate.toISOString(),
           updated_at: new Date().toISOString()
         })
-        .eq('id', existingStore[0].id)
+        .eq('id', existingStore.id)
         .select()
         .single();
 
@@ -150,32 +150,8 @@ export async function GET(request: NextRequest) {
       }
       
       storeId = updatedStore.id;
-      
-      // Verificar si el usuario ya tiene acceso a esta tienda
-      const { data: existingAccess } = await supabase
-        .from('store_users')
-        .select('id, role')
-        .eq('user_id', userId)
-        .eq('store_id', storeId)
-        .limit(1);
-        
-      if (!existingAccess || existingAccess.length === 0) {
-        // Si el usuario no tiene acceso, darle acceso como propietario
-        const { error: accessError } = await supabase
-          .from('store_users')
-          .insert({
-            user_id: userId,
-            store_id: storeId,
-            role: 'owner'
-          });
-          
-        if (accessError) {
-          console.error('Error granting access to store:', accessError);
-          return NextResponse.redirect(new URL('/auth/error?error=access_grant', request.url));
-        }
-      }
     } else {
-      // Si la tienda no existe, crearla
+      // Crear nueva tienda
       const { data: newStore, error: storeError } = await supabase
         .from('stores')
         .insert({
@@ -185,6 +161,7 @@ export async function GET(request: NextRequest) {
           access_token: mlData.access_token,
           refresh_token: mlData.refresh_token,
           token_expiry: expiryDate.toISOString(),
+          created_at: new Date().toISOString()
         })
         .select()
         .single();
@@ -195,14 +172,25 @@ export async function GET(request: NextRequest) {
       }
       
       storeId = newStore.id;
-      
-      // Dar acceso al usuario como propietario
+    }
+    
+    // Verificar si el usuario ya tiene acceso a esta tienda
+    const { data: existingAccess } = await supabase
+      .from('store_users')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('store_id', storeId)
+      .single();
+    
+    if (!existingAccess) {
+      // Conectar usuario con la tienda como propietario
       const { error: accessError } = await supabase
         .from('store_users')
         .insert({
           user_id: userId,
           store_id: storeId,
-          role: 'owner'
+          role: 'owner',
+          created_at: new Date().toISOString()
         });
         
       if (accessError) {
@@ -212,23 +200,23 @@ export async function GET(request: NextRequest) {
     }
 
     // Establecer cookies para la sesión
-    (await cookies()).set('auth_user_id', userId || '', {
+    (await cookies()).set('auth_user_id', userId, {
       path: '/',
-      maxAge: 60 * 60 * 24, // 1 día
+      maxAge: 60 * 60 * 24 * 7, // 7 días
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production'
     });
   
     (await cookies()).set('selected_store_id', storeId, {
       path: '/',
-      maxAge: 60 * 60 * 24, // 1 día
+      maxAge: 60 * 60 * 24 * 7, // 7 días
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production'
     });
   
     (await cookies()).set('ml_user_id', userData.id, {
       path: '/',
-      maxAge: 60 * 60 * 24,
+      maxAge: 60 * 60 * 24 * 7, // 7 días
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production'
     });
