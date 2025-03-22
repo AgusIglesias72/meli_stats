@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       body: new URLSearchParams({
         grant_type: 'authorization_code',
         client_id: process.env.NEXT_PUBLIC_MERCADOLIBRE_APP_ID || '',
-        client_secret: process.env.MERCADOLIBRE_SECRET_KEY || '',
+        client_secret: process.env.NEXT_PUBLIC_MERCADOLIBRE_SECRET_KEY || '',
         code,
         redirect_uri: process.env.NEXT_PUBLIC_MERCADOLIBRE_REDIRECT_URI || ''
       })
