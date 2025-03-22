@@ -4,8 +4,8 @@ import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
 export async function POST(
-  request: NextRequest,
   { params }: { params: { id: string } }
+
 ) {
   try {
     const invitationId = params.id;
