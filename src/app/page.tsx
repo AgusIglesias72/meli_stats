@@ -8,7 +8,6 @@ export default function HomePage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header />
-      <DashboardNav />
       <main className="flex-grow">
         <HeroSection />
         <FeatureSection />
