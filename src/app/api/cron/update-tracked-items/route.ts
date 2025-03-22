@@ -1,8 +1,63 @@
+// src/app/api/cron/update-tracked-items/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
+// Definición de tipos para una mejor tipificación
+interface TrackedItem {
+  id: string;
+  item_id: string;
+  store_id: string;
+  user_id?: string;
+}
+
+interface StoreData {
+  id?: string;
+  access_token: string;
+  token_expiry: string;
+  ml_user_id?: string;
+}
+
+interface ItemData {
+  id: string;
+  site_id: string;
+  title: string;
+  seller_id: string;
+  category_id: string;
+  official_store_id: string | null;
+  price: number;
+  base_price: number;
+  currency_id: string;
+  available_quantity: number;
+  permalink: string;
+  thumbnail: string;
+  status: string;
+  attributes?: Array<{
+    id: string;
+    name: string;
+    value_id?: string;
+    value_name?: string;
+  }>;
+}
+
+interface SalePriceData {
+  regular_amount: number | null;
+  amount: number | null;
+}
+
+interface ProcessResult {
+  store_id: string;
+  error?: string;
+  processed?: number;
+  total?: number;
+}
+
+interface ItemProcessResult {
+  success: boolean;
+  error?: any;
+}
+
 // Clave secreta para autorizar peticiones externas
-const API_SECRET_KEY = process.env.API_SECRET_KEY || 'default-secret-key-change-this';
+const API_SECRET_KEY = process.env.NEXT_PUBLIC_API_SECRET_KEY;
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,181 +67,178 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Obtener el ID del usuario cuyas items se van a actualizar
-    // Si no se proporciona, actualizaremos todos los usuarios
-    const { userId } = await request.json().catch(() => ({}));
-
     const supabase = createServerSupabaseClient();
     
-    // Si se proporciona un userId, verificar que existe
-    if (userId) {
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
+    // Obtener todos los items a trackear
+    const { data: trackedItems, error: trackedError } = await supabase
+      .from('tracked_items_config')
+      .select('id, item_id, store_id');
 
-      if (userError || !user) {
-        return NextResponse.json({ error: 'User not found' }, { status: 404 });
-      }
+    if (trackedError) {
+      console.error('Error fetching tracked items:', trackedError);
+      return NextResponse.json({ error: 'Error fetching tracked items' }, { status: 500 });
     }
 
-    // Obtener todos los usuarios activos con sus tokens
-    const { data: usersWithTokens, error: usersError } = await supabase
-      .from('users')
-      .select('id, user_id, access_token')
-      .eq(userId ? 'user_id' : 'id IS NOT NULL', userId || true);
-
-    if (usersError) {
-      console.error('Error fetching users:', usersError);
-      return NextResponse.json({ error: 'Error fetching users' }, { status: 500 });
-    }
-
-    if (!usersWithTokens || usersWithTokens.length === 0) {
+    if (!trackedItems || trackedItems.length === 0) {
       return NextResponse.json({ 
         success: true, 
-        message: 'No users found to update items'
+        message: 'No tracked items found' 
       });
     }
 
-    // Para cada usuario, actualizar sus items trackeados
-    const updateResults = await Promise.all(
-      usersWithTokens.map(async (user) => {
-        try {
-          // Obtener todos los items a trackear del usuario
-          const { data: trackedItems, error: itemsError } = await supabase
-            .from('tracked_items_config')
-            .select('id, item_id')
-            .eq('user_id', user.id);
+    // Agrupar por tienda para usar los tokens correctos
+    const itemsByStore: Record<string, TrackedItem[]> = {};
+    trackedItems.forEach((item: TrackedItem) => {
+      if (!itemsByStore[item.store_id]) {
+        itemsByStore[item.store_id] = [];
+      }
+      itemsByStore[item.store_id].push(item);
+    });
 
-          if (itemsError) {
-            throw new Error(`Error fetching tracked items for user ${user.user_id}: ${itemsError.message}`);
-          }
-
-          if (!trackedItems || trackedItems.length === 0) {
-            return {
-              user_id: user.user_id,
-              updated: 0,
-              failed: 0,
-              message: 'No items to update'
-            };
-          }
-
-          // Actualizar cada item
-          const itemUpdateResults = await Promise.allSettled(
-            trackedItems.map(async (trackedItem) => {
-              try {
-                // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
-                const itemResponse = await fetch(`https://api.mercadolibre.com/items/${trackedItem.item_id}`, {
-                  headers: {
-                    'Authorization': `Bearer ${user.access_token}`
-                  }
-                });
-
-                if (!itemResponse.ok) {
-                  throw new Error(`Error fetching item ${trackedItem.item_id}: ${itemResponse.statusText}`);
-                }
-
-                const itemData = await itemResponse.json();
-
-                // Obtener información del precio de venta
-                const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${trackedItem.item_id}/sale_price`, {
-                  headers: {
-                    'Authorization': `Bearer ${user.access_token}`
-                  }
-                });
-
-                let salePriceData = null;
-                if (salePriceResponse.ok) {
-                  salePriceData = await salePriceResponse.json();
-                }
-
-                // Guardar los datos en la tabla de datos trackeados
-                const { error: insertError } = await supabase
-                  .from('tracked_items_data')
-                  .insert({
-                    config_id: trackedItem.id,
-                    item_id: trackedItem.item_id,
-                    site_id: itemData.site_id,
-                    title: itemData.title,
-                    seller_id: itemData.seller_id,
-                    category_id: itemData.category_id,
-                    official_store_id: itemData.official_store_id,
-                    price: itemData.price,
-                    base_price: itemData.base_price,
-                    currency_id: itemData.currency_id,
-                    available_quantity: itemData.available_quantity,
-                    permalink: itemData.permalink,
-                    thumbnail: itemData.thumbnail,
-                    status: itemData.status,
-                    regular_amount: salePriceData?.regular_amount || null,
-                    amount: salePriceData?.amount || null,
-                    last_updated: new Date().toISOString()
-                  });
-
-                if (insertError) {
-                  throw new Error(`Error inserting data for item ${trackedItem.item_id}: ${insertError.message}`);
-                }
-
-                return {
-                  success: true,
-                  item_id: trackedItem.item_id
-                };
-              } catch (error: any) {
-                return {
-                  success: false,
-                  item_id: trackedItem.item_id,
-                  error: error.message || 'Unknown error'
-                };
-              }
-            })
-          );
-
-          // Contar éxitos y fracasos
-          const successful = itemUpdateResults.filter(result => 
-            result.status === 'fulfilled' && (result.value as any).success
-          ).length;
-          
-          const failed = itemUpdateResults.filter(result => 
-            result.status === 'rejected' || !(result.value as any).success
-          ).length;
-
-          return {
-            user_id: user.user_id,
-            updated: successful,
-            failed: failed,
-            total: trackedItems.length
-          };
-        } catch (error: any) {
-          return {
-            user_id: user.user_id,
-            updated: 0,
-            failed: 0,
-            error: error.message || 'Unknown error'
-          };
+    // Procesar cada tienda
+    const results: ProcessResult[] = [];
+    for (const storeId of Object.keys(itemsByStore)) {
+      // Obtener token para la tienda
+      const { data: storeData, error: storeError } = await supabase
+        .from('stores')
+        .select('access_token, token_expiry')
+        .eq('id', storeId)
+        .single();
+        
+      if (storeError || !storeData) {
+        results.push({
+          store_id: storeId,
+          error: 'Store not found or no access token',
+          processed: 0
+        });
+        continue;
+      }
+      
+      // Verificar si el token ha expirado
+      if (new Date(storeData.token_expiry) < new Date()) {
+        results.push({
+          store_id: storeId,
+          error: 'Token expired',
+          processed: 0
+        });
+        continue;
+      }
+      
+      // Procesar items de esta tienda en lotes
+      const items = itemsByStore[storeId];
+      const batchSize = 10;
+      let processed = 0;
+      
+      for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        const batchResults = await Promise.allSettled(
+          batch.map(async (item) => {
+            try {
+              // Obtener datos del item desde la API de ML
+              const { itemData, salePriceData } = await fetchItemData(item.item_id, storeData.access_token);
+              
+              // Guardar en tracked_items_data
+              await saveItemData(supabase, item.id, { itemData, salePriceData });
+              
+              return { success: true } as ItemProcessResult;
+            } catch (error) {
+              console.error(`Error processing item ${item.item_id}:`, error);
+              return { success: false, error } as ItemProcessResult;
+            }
+          })
+        );
+        
+        // Contar los éxitos
+        processed += batchResults.filter(r => 
+          r.status === 'fulfilled' && (r.value as ItemProcessResult).success
+        ).length;
+        
+        // Pausa para no sobrecargar la API
+        if (i + batchSize < items.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
-      })
-    );
-
-    // Preparar resumen de resultados
-    const totalSuccessful = updateResults.reduce((acc, result) => acc + result.updated, 0);
-    const totalFailed = updateResults.reduce((acc, result) => acc + result.failed, 0);
-    const totalUsers = updateResults.length;
-    const usersWithErrors = updateResults.filter(result => 'error' in result).length;
+      }
+      
+      results.push({
+        store_id: storeId,
+        processed,
+        total: items.length
+      });
+    }
 
     return NextResponse.json({
       success: true,
-      message: `Updated items for ${totalUsers} users. Total: ${totalSuccessful} successful, ${totalFailed} failed`,
-      summary: {
-        users_processed: totalUsers,
-        users_with_errors: usersWithErrors,
-        total_items_updated: totalSuccessful,
-        total_items_failed: totalFailed
-      },
-      details: updateResults
+      results
     });
   } catch (error) {
-    console.error('Error processing cron update request:', error);
+    console.error('Error in cron job:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
+}
+
+// Función para obtener datos de un item desde la API de ML
+async function fetchItemData(itemId: string, accessToken: string): Promise<{ itemData: ItemData; salePriceData: SalePriceData | null }> {
+  const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`
+    }
+  });
+
+  if (!itemResponse.ok) {
+    throw new Error(`Error fetching item ${itemId}: ${itemResponse.statusText}`);
+  }
+
+  const itemData = await itemResponse.json() as ItemData;
+  
+  // Obtener información del precio de venta
+  const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`
+    }
+  });
+
+  let salePriceData: SalePriceData | null = null;
+  if (salePriceResponse.ok) {
+    salePriceData = await salePriceResponse.json() as SalePriceData;
+  }
+  
+  return { itemData, salePriceData };
+}
+
+// Función para guardar datos en tracked_items_data
+async function saveItemData(
+  supabase: any,
+  configId: string, 
+  { itemData, salePriceData }: { itemData: ItemData; salePriceData: SalePriceData | null }
+) {
+  let brand: string | null = null;
+  if (itemData.attributes && Array.isArray(itemData.attributes)) {
+    const brandAttribute = itemData.attributes.find(attr => attr.id === 'BRAND'); 
+    if (brandAttribute && brandAttribute.value_name) {
+      brand = brandAttribute.value_name;
+    }
+  }
+
+  return supabase
+    .from('tracked_items_data')
+    .insert({
+      config_id: configId,
+      item_id: itemData.id,
+      site_id: itemData.site_id,
+      title: itemData.title,
+      seller_id: itemData.seller_id,
+      category_id: itemData.category_id,
+      official_store_id: itemData.official_store_id,
+      price: itemData.price,
+      base_price: itemData.base_price,
+      currency_id: itemData.currency_id,
+      available_quantity: itemData.available_quantity,
+      permalink: itemData.permalink,
+      thumbnail: itemData.thumbnail,
+      status: itemData.status,
+      regular_amount: salePriceData?.regular_amount || null,
+      amount: salePriceData?.amount || null,
+      brand: brand,
+      last_updated: new Date().toISOString()
+    });
 }
