@@ -6,35 +6,46 @@ import { cookies } from 'next/headers';
 export async function GET(request: NextRequest) {
   try {
     // Verificar autenticación
-    const mlUserId = (await cookies()).get('ml_user_id')?.value;
+    const authUserId = (await cookies()).get('auth_user_id')?.value;
     
-    if (!mlUserId) {
+    if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Obtener parámetros
-    const searchParams = request.nextUrl.searchParams;
-    const userIdParam = searchParams.get('user_id');
+    // Obtener el ID de la tienda seleccionada
+    const selectedStoreId = (await cookies()).get('selected_store_id')?.value;
     
-    // Verificar que el user_id del parámetro coincida con el autenticado
-    if (userIdParam !== mlUserId) {
-      return NextResponse.json({ error: 'User ID mismatch' }, { status: 403 });
+    if (!selectedStoreId) {
+      return NextResponse.json({ error: 'No store selected' }, { status: 400 });
     }
 
-    // Obtener el usuario desde la base de datos
+    // Crear conexión a Supabase
     const supabase = createServerSupabaseClient();
     
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id, sheets_api_key')
-      .eq('user_id', mlUserId)
+    // Verificar si el usuario tiene acceso a esta tienda
+    const { data: userAccess, error: accessError } = await supabase
+      .from('store_users')
+      .select('role')
+      .eq('user_id', authUserId)
+      .eq('store_id', selectedStoreId)
       .single();
 
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    if (accessError || !userAccess) {
+      return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
-    if (!userData.sheets_api_key) {
+    // Obtener información de la tienda
+    const { data: storeData, error: storeError } = await supabase
+      .from('stores')
+      .select('gsheets_api_key, store_id')
+      .eq('id', selectedStoreId)
+      .single();
+
+    if (storeError || !storeData) {
+      return NextResponse.json({ error: 'Store not found' }, { status: 404 });
+    }
+
+    if (!storeData.gsheets_api_key) {
       return NextResponse.json({ error: 'API key not generated' }, { status: 400 });
     }
 
@@ -42,7 +53,7 @@ export async function GET(request: NextRequest) {
     const { data: items, error: itemsError } = await supabase
       .from('items')
       .select('id, item_id, title')
-      .eq('user_id', userData.id)
+      .eq('store_id', selectedStoreId)
       .limit(5);
 
     if (itemsError) {
@@ -53,7 +64,7 @@ export async function GET(request: NextRequest) {
     const { data: trackedItems, error: trackedError } = await supabase
       .from('tracked_items_config')
       .select('id, item_id, notes')
-      .eq('user_id', userData.id)
+      .eq('store_id', selectedStoreId)
       .limit(5);
 
     if (trackedError) {
@@ -64,6 +75,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Connection test successful',
+      storeId: storeData.store_id,
       items,
       tracked_items: trackedItems
     });

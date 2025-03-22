@@ -9,6 +9,7 @@ import ProductsTab from '@/components/dashboard/ProductsTab';
 import TrackedItemsTab from '@/components/dashboard/TrackedItemsTab';
 import AddTrackerTab from '@/components/dashboard/AddTrackerTab';
 import SheetsIntegrationTab from '@/components/dashboard/SheetsIntegrationTab';
+import { Loader2 } from 'lucide-react';
 
 interface Item {
   id: string;
@@ -82,6 +83,11 @@ export default function Dashboard() {
   const [autoImportMessage, setAutoImportMessage] = useState<string | null>(null);
   const [trackedError, setTrackedError] = useState<string | null>(null);
   const [mlUserId, setMlUserId] = useState('');
+  const [storeInfo, setStoreInfo] = useState<{
+    id: string;
+    name: string;
+    store_id: string;
+  } | null>(null);
 
   // Cargar los items al iniciar
   useEffect(() => {
@@ -108,6 +114,24 @@ export default function Dashboard() {
     
     fetchUserInfo();
   }, []);
+
+  // Load current store info when component mounts
+  useEffect(() => {
+    async function fetchStoreInfo() {
+      try {
+        const response = await fetch('/api/stores/current');
+        if (response.ok) {
+          const data = await response.json();
+          setStoreInfo(data.store || null);
+        }
+      } catch (error) {
+        console.error('Error fetching store info:', error);
+      }
+    }
+    
+    fetchStoreInfo();
+  }, []);
+
 
   const loadItems = async () => {
     try {
@@ -379,7 +403,13 @@ export default function Dashboard() {
             </TabsContent>
             
             <TabsContent value="sheets">
-              <SheetsIntegrationTab mlUserId={mlUserId} />
+              {storeInfo ? (
+                <SheetsIntegrationTab storeId={storeInfo.store_id} />
+              ) : (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-uicore-green" />
+                </div>
+              )}
             </TabsContent>
           </Tabs>
         </div>

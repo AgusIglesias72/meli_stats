@@ -1,4 +1,3 @@
-// src/components/dashboard/SheetsIntegrationTab.tsx
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,13 +7,14 @@ import { Loader2, Copy, FileSpreadsheet, RefreshCw, Info, Check, AlertCircle, Ch
 import Toast from '@/components/ui/toast';
 
 interface SheetsIntegrationTabProps {
-  mlUserId: string;
+  storeId: string;
 }
 
-export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabProps) {
+export default function SheetsIntegrationTab({ storeId }: SheetsIntegrationTabProps) {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [apiKey, setApiKey] = useState<string | null>(null);
+  const [storeIdMl, setStoreIdMl] = useState<string | null>(null); // ID de tienda de ML
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [showScript, setShowScript] = useState(false);
@@ -54,6 +54,7 @@ export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabP
       if (response.ok) {
         const data = await response.json();
         setApiKey(data.apiKey || null);
+        setStoreIdMl(data.storeId || null);
       }
     } catch (error) {
       console.error('Error loading API key:', error);
@@ -67,11 +68,16 @@ export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabP
       setGenerating(true);
       const response = await fetch('/api/sheets/generate-key', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
       });
       
       if (response.ok) {
         const data = await response.json();
         setApiKey(data.apiKey);
+        setStoreIdMl(data.storeId);
         showToast('success', 'API Key generada correctamente');
       } else {
         throw new Error('Error al generar la API Key');
@@ -128,7 +134,7 @@ export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabP
       setTestingConnection(true);
       setTestResult(null);
       
-      const response = await fetch(`/api/sheets/test?user_id=${mlUserId}`);
+      const response = await fetch(`/api/sheets/test`);
       
       if (response.ok) {
         const data = await response.json();
@@ -162,8 +168,8 @@ export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabP
   // Clave API para autenticar las solicitudes
   API_KEY: '${apiKey}',
   
-  // ID de usuario de Mercado Libre
-  ML_USER_ID: '${mlUserId}',
+  // ID de la tienda (store_id)
+  STORE_ID: '${storeIdMl}',
   
   // Intervalo de sincronización automática en minutos
   SYNC_INTERVAL_MINUTES: 60
@@ -247,18 +253,18 @@ export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabP
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tu ID de usuario de Mercado Libre
+                      ID de tu tienda
                     </label>
                     <div className="flex">
                       <Input
                         type="text"
-                        value={mlUserId}
+                        value={storeIdMl || ''}
                         readOnly
                         className="rounded-r-none"
                       />
                       <Button 
                         className="rounded-l-none" 
-                        onClick={() => copyToClipboard(mlUserId)}
+                        onClick={() => copyToClipboard(storeIdMl || '')}
                       >
                         <Copy className="h-4 w-4" />
                       </Button>
@@ -373,8 +379,8 @@ export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabP
                   <h4 className="text-md font-medium mb-2">Paso 3: Configurar Apps Script</h4>
                   <ol className="list-decimal list-inside space-y-2 text-sm text-gray-600 pl-4">
                     <li>En Google Sheets, ve a <strong>Extensiones &gt; Apps Script</strong></li>
-                    <li>Copia y pega el código de Apps Script proporcionado abajo</li>
-                    <li>Actualiza la configuración con tus datos (API Key, ID de usuario)</li>
+                    <li>Copia y pega el código de Apps Script proporcionado en el archivo de ejemplo</li>
+                    <li>Actualiza la configuración con tus datos (API Key, ID de tienda)</li>
                     <li>Guarda el script (ícono de disquete o Ctrl+S)</li>
                     <li>Ejecuta la función <code>setup()</code> para inicializar la hoja</li>
                     <li>Autoriza los permisos solicitados por Google</li>
@@ -386,18 +392,18 @@ export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabP
                     variant="outline"
                     size="sm"
                     className="w-full"
-                    onClick={() => window.open('/sheets-integration-guide.pdf', '_blank')}
+                    onClick={() => window.open('/google-apps-script.js', '_blank')}
                   >
                     <FileSpreadsheet className="h-4 w-4 mr-2" />
-                    Descargar guía completa en PDF
+                    Descargar código de ejemplo
                   </Button>
                 </div>
                 
                 <div className="pt-4">
                   <h4 className="text-md font-medium mb-2">Código de Google Apps Script</h4>
                   <p className="text-sm text-gray-600 mb-2">
-                    Este código debe copiarse y pegarse en el editor de Apps Script de Google Sheets. 
-                    No olvides reemplazar la sección de configuración con tus datos.
+                    Aquí tienes un fragmento del código que debes copiar y pegar en el editor de Apps Script.
+                    Asegúrate de reemplazar la sección de configuración con tus datos.
                   </p>
                   <div className="bg-gray-50 p-4 rounded-md">
                     <div className="flex justify-between items-center mb-2">
@@ -406,9 +412,9 @@ export default function SheetsIntegrationTab({ mlUserId }: SheetsIntegrationTabP
                         size="sm"
                         variant="outline"
                         className="text-xs h-7"
-                        onClick={() => window.open('/google-apps-script.js', '_blank')}
+                        onClick={() => copyToClipboard(getAppsScriptConfig())}
                       >
-                        Ver código completo
+                        Copiar configuración
                       </Button>
                     </div>
                     <div className="text-xs bg-gray-100 p-3 rounded overflow-x-auto max-h-60">

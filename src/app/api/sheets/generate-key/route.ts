@@ -7,48 +7,74 @@ import crypto from 'crypto';
 export async function POST(request: NextRequest) {
   try {
     // Verificar autenticación
-    const mlUserId = (await cookies()).get('ml_user_id')?.value;
+    const authUserId = (await cookies()).get('auth_user_id')?.value;
     
-    if (!mlUserId) {
+    if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    // Obtener el ID de la tienda seleccionada
+    const selectedStoreId = (await cookies()).get('selected_store_id')?.value;
+    
+    if (!selectedStoreId) {
+      return NextResponse.json({ error: 'No store selected' }, { status: 400 });
     }
 
     // Determinar si es una regeneración forzada
     const body = await request.json().catch(() => ({}));
     const forceReset = body?.reset === true;
 
-    // Obtener el usuario desde la base de datos
+    // Crear conexión a Supabase
     const supabase = createServerSupabaseClient();
     
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id, sheets_api_key')
-      .eq('user_id', mlUserId)
+    // Verificar si el usuario tiene acceso a esta tienda
+    const { data: userAccess, error: accessError } = await supabase
+      .from('store_users')
+      .select('role')
+      .eq('user_id', authUserId)
+      .eq('store_id', selectedStoreId)
       .single();
 
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    if (accessError || !userAccess) {
+      return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
+    }
+
+    // Verificar si el usuario tiene rol suficiente para generar API key (owner o admin)
+    if (!['owner', 'admin'].includes(userAccess.role)) {
+      return NextResponse.json({ error: 'You do not have permission to generate API keys' }, { status: 403 });
+    }
+
+    // Obtener información de la tienda
+    const { data: storeData, error: storeError } = await supabase
+      .from('stores')
+      .select('gsheets_api_key, store_id')
+      .eq('id', selectedStoreId)
+      .single();
+
+    if (storeError || !storeData) {
+      return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
     // Verificar si ya tiene una API key y no se solicita regeneración
-    if (userData.sheets_api_key && !forceReset) {
+    if (storeData.gsheets_api_key && !forceReset) {
       return NextResponse.json({
-        apiKey: userData.sheets_api_key,
+        apiKey: storeData.gsheets_api_key,
+        storeId: storeData.store_id,
         message: 'API key already exists'
       });
     }
 
     // Generar una nueva API key
-    const newApiKey = generateApiKey(mlUserId);
+    const newApiKey = generateApiKey(storeData.store_id);
 
-    // Actualizar la API key del usuario
+    // Actualizar la API key de la tienda
     const { error: updateError } = await supabase
-      .from('users')
+      .from('stores')
       .update({
-        sheets_api_key: newApiKey,
+        gsheets_api_key: newApiKey,
         updated_at: new Date().toISOString()
       })
-      .eq('id', userData.id);
+      .eq('id', selectedStoreId);
 
     if (updateError) {
       console.error('Error updating API key:', updateError);
@@ -57,6 +83,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       apiKey: newApiKey,
+      storeId: storeData.store_id,
       message: forceReset ? 'API key regenerated' : 'API key generated'
     });
   } catch (error) {
@@ -66,13 +93,13 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Genera una API key segura basada en el ID de usuario y un componente aleatorio
+ * Genera una API key segura basada en el ID de tienda y un componente aleatorio
  */
-function generateApiKey(userId: string): string {
-  // Combinar el ID de usuario con un timestamp y un componente aleatorio
+function generateApiKey(storeId: string): string {
+  // Combinar el ID de tienda con un timestamp y un componente aleatorio
   const randomBytes = crypto.randomBytes(16).toString('hex');
   const timestamp = Date.now().toString();
-  const baseString = `${userId}-${timestamp}-${randomBytes}`;
+  const baseString = `${storeId}-${timestamp}-${randomBytes}`;
   
   // Generar un hash SHA-256 del string base
   const hash = crypto.createHash('sha256').update(baseString).digest('hex');
