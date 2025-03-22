@@ -1,3 +1,4 @@
+// src/app/api/items/auto-import/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
@@ -5,34 +6,59 @@ import { cookies } from 'next/headers';
 export async function POST(request: NextRequest) {
   try {
     // Verificar autenticación
-    const mlUserId = (await cookies()).get('ml_user_id')?.value;
+    const authUserId = (await cookies()).get('auth_user_id')?.value;
     
-    if (!mlUserId) {
+    if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    
+    // Obtener el ID de la tienda seleccionada
+    const selectedStoreId = (await cookies()).get('selected_store_id')?.value;
+    
+    if (!selectedStoreId) {
+      return NextResponse.json({ error: 'No store selected' }, { status: 400 });
+    }
 
-    // Obtener el usuario desde la base de datos
+    // Crear conexión a Supabase
     const supabase = createServerSupabaseClient();
     
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id, access_token, token_expiry')
-      .eq('user_id', mlUserId)
+    // Verificar si el usuario tiene acceso a esta tienda
+    const { data: userAccess, error: accessError } = await supabase
+      .from('store_users')
+      .select('role')
+      .eq('user_id', authUserId)
+      .eq('store_id', selectedStoreId)
       .single();
 
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    if (accessError || !userAccess) {
+      return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
+    }
+    
+    // Verificar si el usuario tiene permisos para importar (todos excepto viewer)
+    if (userAccess.role === 'viewer') {
+      return NextResponse.json({ error: 'You do not have permission to import items' }, { status: 403 });
+    }
+
+    // Obtener la información de la tienda, incluyendo tokens de acceso
+    const { data: storeData, error: storeError } = await supabase
+      .from('stores')
+      .select('id, store_id, ml_user_id, access_token, token_expiry')
+      .eq('id', selectedStoreId)
+      .single();
+
+    if (storeError || !storeData) {
+      return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
     // Verificar si el token ha expirado
-    if (new Date(userData.token_expiry) < new Date()) {
+    if (new Date(storeData.token_expiry) < new Date()) {
       return NextResponse.json({ error: 'Token expired, please re-authenticate' }, { status: 401 });
     }
 
     // Hacer la solicitud a la API de Mercado Libre para obtener todos los productos del usuario
-    const searchResponse = await fetch(`https://api.mercadolibre.com/users/${mlUserId}/items/search`, {
+    const searchResponse = await fetch(`https://api.mercadolibre.com/users/${storeData.ml_user_id}/items/search`, {
       headers: {
-        'Authorization': `Bearer ${userData.access_token}`
+        'Authorization': `Bearer ${storeData.access_token}`
       }
     });
 
@@ -67,7 +93,7 @@ export async function POST(request: NextRequest) {
             // Obtener detalles del ítem
             const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
               headers: {
-                'Authorization': `Bearer ${userData.access_token}`
+                'Authorization': `Bearer ${storeData.access_token}`
               }
             });
 
@@ -80,7 +106,7 @@ export async function POST(request: NextRequest) {
             // Obtener información del precio de venta
             const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
               headers: {
-                'Authorization': `Bearer ${userData.access_token}`
+                'Authorization': `Bearer ${storeData.access_token}`
               }
             });
 
@@ -94,12 +120,13 @@ export async function POST(request: NextRequest) {
               .from('items')
               .select('id')
               .eq('item_id', itemId)
-              .eq('user_id', userData.id)
+              .eq('user_id', authUserId)
               .single();
 
             const itemToSave = {
               item_id: itemId,
-              user_id: userData.id,
+              user_id: authUserId,
+              store_id: selectedStoreId, // Asociar con la tienda actual
               site_id: itemData.site_id,
               title: itemData.title,
               seller_id: itemData.seller_id,

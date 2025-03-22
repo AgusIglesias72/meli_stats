@@ -101,10 +101,17 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Verificar autenticación
-    const mlUserId = (await cookies()).get('ml_user_id')?.value;
+    const authUserId = (await cookies()).get('auth_user_id')?.value;
     
-    if (!mlUserId) {
+    if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    // Obtener el ID de la tienda seleccionada
+    const selectedStoreId = (await cookies()).get('selected_store_id')?.value;
+    
+    if (!selectedStoreId) {
+      return NextResponse.json({ error: 'No store selected' }, { status: 400 });
     }
 
     // Obtener datos del cuerpo
@@ -114,29 +121,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Item ID is required' }, { status: 400 });
     }
 
-    // Obtener el usuario desde la base de datos
+    // Crear conexión a Supabase
     const supabase = createServerSupabaseClient();
     
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id, access_token, token_expiry')
-      .eq('user_id', mlUserId)
+    // Verificar si el usuario tiene acceso a esta tienda
+    const { data: userAccess, error: accessError } = await supabase
+      .from('store_users')
+      .select('role')
+      .eq('user_id', authUserId)
+      .eq('store_id', selectedStoreId)
       .single();
 
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    if (accessError || !userAccess) {
+      return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
+    }
+    
+    // Verificar si el usuario tiene permisos para trackear items (todos excepto viewer)
+    if (userAccess.role === 'viewer') {
+      return NextResponse.json({ error: 'You do not have permission to track items' }, { status: 403 });
+    }
+
+    // Obtener la información de la tienda, incluyendo tokens de acceso
+    const { data: storeData, error: storeError } = await supabase
+      .from('stores')
+      .select('access_token, token_expiry')
+      .eq('id', selectedStoreId)
+      .single();
+
+    if (storeError || !storeData) {
+      return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
     // Verificar si el token ha expirado
-    if (new Date(userData.token_expiry) < new Date()) {
+    if (new Date(storeData.token_expiry) < new Date()) {
       return NextResponse.json({ error: 'Token expired, please re-authenticate' }, { status: 401 });
     }
 
-    // Comprobar si el item ya está siendo trackeado por este usuario
+    // Comprobar si el item ya está siendo trackeado por este usuario en esta tienda
     const { data: existingItem } = await supabase
       .from('tracked_items_config')
       .select('id')
-      .eq('user_id', userData.id)
+      .eq('user_id', authUserId)
+      .eq('store_id', selectedStoreId)
       .eq('item_id', itemId)
       .single();
 
@@ -151,7 +177,8 @@ export async function POST(request: NextRequest) {
     const { data: newItem, error: insertError } = await supabase
       .from('tracked_items_config')
       .insert({
-        user_id: userData.id,
+        user_id: authUserId,
+        store_id: selectedStoreId,
         item_id: itemId,
         notes: notes || null
       })
@@ -168,7 +195,7 @@ export async function POST(request: NextRequest) {
     try {
       const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
         headers: {
-          'Authorization': `Bearer ${userData.access_token}`
+          'Authorization': `Bearer ${storeData.access_token}`
         }
       });
 
@@ -190,7 +217,7 @@ export async function POST(request: NextRequest) {
         // Obtener información del precio de venta
         const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
           headers: {
-            'Authorization': `Bearer ${userData.access_token}`
+            'Authorization': `Bearer ${storeData.access_token}`
           }
         });
 
@@ -235,76 +262,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Error processing add tracked item request:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
-
-// DELETE: Elimina un item trackeado
-export async function DELETE(request: NextRequest) {
-  try {
-    // Verificar autenticación
-    const mlUserId = (await cookies()).get('ml_user_id')?.value;
-    
-    if (!mlUserId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Obtener el ID del item a eliminar
-    const searchParams = request.nextUrl.searchParams;
-    const configId = searchParams.get('id');
-    
-    if (!configId) {
-      return NextResponse.json({ error: 'Tracked item ID is required' }, { status: 400 });
-    }
-
-    // Obtener el usuario desde la base de datos
-    const supabase = createServerSupabaseClient();
-    
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('user_id', mlUserId)
-      .single();
-
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    // Verificar que el item pertenece al usuario
-    const { data: trackedItem } = await supabase
-      .from('tracked_items_config')
-      .select('id')
-      .eq('id', configId)
-      .eq('user_id', userData.id)
-      .single();
-
-    if (!trackedItem) {
-      return NextResponse.json({ error: 'Item not found or not owned by user' }, { status: 404 });
-    }
-
-    // Primero, eliminar los datos asociados
-    await supabase
-      .from('tracked_items_data')
-      .delete()
-      .eq('config_id', configId);
-
-    // Luego, eliminar la configuración
-    const { error: deleteError } = await supabase
-      .from('tracked_items_config')
-      .delete()
-      .eq('id', configId);
-
-    if (deleteError) {
-      console.error('Error deleting tracked item:', deleteError);
-      return NextResponse.json({ error: 'Error removing tracked item' }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: 'Item removed from tracking'
-    });
-  } catch (error) {
-    console.error('Error processing delete tracked item request:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
