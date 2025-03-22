@@ -138,6 +138,10 @@ export async function GET(request: NextRequest) {
           access_token: mlData.access_token,
           refresh_token: mlData.refresh_token,
           token_expiry: expiryDate.toISOString(),
+          seller_first_name: userData.first_name || '',
+          seller_last_name: userData.last_name || '',
+          seller_email: userData.email || '',
+          seller_identification_number: userData.identification?.number || '',
           updated_at: new Date().toISOString()
         })
         .eq('id', existingStore.id)
@@ -161,6 +165,10 @@ export async function GET(request: NextRequest) {
           access_token: mlData.access_token,
           refresh_token: mlData.refresh_token,
           token_expiry: expiryDate.toISOString(),
+          seller_first_name: userData.first_name || '',
+          seller_last_name: userData.last_name || '',
+          seller_email: userData.email || '',
+          seller_identification_number: userData.identification?.number || '',
           created_at: new Date().toISOString()
         })
         .select()
