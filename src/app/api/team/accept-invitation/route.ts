@@ -10,7 +10,10 @@ export async function POST(request: NextRequest) {
     const authUserId = (await cookies()).get('auth_user_id')?.value;
     
     if (!authUserId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ 
+        error: 'Unauthorized', 
+        requiresAuth: true 
+      }, { status: 401 });
     }
 
     // Obtener el token de la invitación desde el cuerpo de la solicitud
@@ -58,7 +61,7 @@ export async function POST(request: NextRequest) {
     // Verificar si el email del usuario coincide con el de la invitación
     if (userData.email.toLowerCase() !== invitation.email.toLowerCase()) {
       return NextResponse.json({ 
-        error: 'This invitation was sent to a different email address' 
+        error: 'This invitation was sent to a different email address. Please log in with the correct account.' 
       }, { status: 403 });
     }
 
@@ -74,16 +77,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'You are already a member of this store' }, { status: 409 });
     }
 
-    // Comenzar una transacción
-    // Nota: Supabase no soporta transacciones en la API, así que haremos esto en dos pasos
-
-    // 1. Crear la relación usuario-tienda
+    // Crear la relación usuario-tienda
     const { data: storeUser, error: storeUserError } = await supabase
       .from('store_users')
       .insert({
         user_id: authUserId,
         store_id: invitation.store_id,
-        role: invitation.role
+        role: invitation.role,
+        created_at: new Date().toISOString()
       })
       .select()
       .single();
@@ -93,11 +94,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Error accepting invitation' }, { status: 500 });
     }
 
-    // 2. Marcar la invitación como utilizada
+    // Marcar la invitación como utilizada
     const { error: updateError } = await supabase
       .from('invitations')
       .update({
-        used_at: new Date().toISOString()
+        used_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       })
       .eq('id', invitation.id);
 
@@ -110,7 +112,7 @@ export async function POST(request: NextRequest) {
     // Obtener información de la tienda para la respuesta
     const { data: storeInfo, error: storeError } = await supabase
       .from('stores')
-      .select('id, name, store_id')
+      .select('id, name, store_id, ml_user_id')
       .eq('id', invitation.store_id)
       .single();
 
@@ -127,8 +129,8 @@ export async function POST(request: NextRequest) {
     });
   
     // Establecer el ML user ID para esta tienda
-    if (storeInfo?.store_id) {
-      (await cookies()).set('ml_user_id', storeInfo.store_id, {
+    if (storeInfo?.ml_user_id) {
+      (await cookies()).set('ml_user_id', storeInfo.ml_user_id, {
         path: '/',
         maxAge: 60 * 60 * 24 * 7, // 7 días
         httpOnly: true,
@@ -139,7 +141,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Invitation accepted successfully',
-      store: storeInfo || { id: invitation.store_id },
+      store: storeInfo ? {
+        id: storeInfo.id,
+        name: storeInfo.name,
+        store_id: storeInfo.store_id
+      } : { id: invitation.store_id },
       role: invitation.role
     });
   } catch (error) {

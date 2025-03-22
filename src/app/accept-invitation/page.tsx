@@ -6,7 +6,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, AlertCircle, Check } from 'lucide-react';
+import { Loader2, AlertCircle, Check, LogIn } from 'lucide-react';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 
@@ -16,6 +16,8 @@ export default function AcceptInvitationPage() {
   const [verifying, setVerifying] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [requiresAuth, setRequiresAuth] = useState(false);
   const [invitationDetails, setInvitationDetails] = useState<{
     email: string;
     role: string;
@@ -55,6 +57,16 @@ export default function AcceptInvitationPage() {
         throw new Error(data.error || 'Error al verificar la invitación');
       }
       
+      // Manejar advertencias
+      if (data.warning) {
+        setWarning(data.warning);
+      }
+      
+      // Verificar si se requiere autenticación
+      if (data.requiresAuth) {
+        setRequiresAuth(true);
+      }
+      
       setInvitationDetails(data.invitation);
     } catch (err: any) {
       setError(err.message || 'No se pudo verificar la invitación');
@@ -88,6 +100,13 @@ export default function AcceptInvitationPage() {
       const data = await response.json();
       
       if (!response.ok) {
+        // Si requiere autenticación, redirigir a login
+        if (response.status === 401 && data.requiresAuth) {
+          const loginUrl = `/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+          router.push(loginUrl);
+          return;
+        }
+        
         throw new Error(data.error || 'Error al aceptar la invitación');
       }
       
@@ -116,6 +135,11 @@ export default function AcceptInvitationPage() {
       default:
         return role.charAt(0).toUpperCase() + role.slice(1);
     }
+  };
+  
+  const redirectToLogin = () => {
+    const redirectUrl = encodeURIComponent(window.location.pathname + window.location.search);
+    router.push(`/login?redirect=${redirectUrl}`);
   };
   
   return (
@@ -164,6 +188,13 @@ export default function AcceptInvitationPage() {
               </div>
             ) : invitationDetails ? (
               <div className="space-y-6">
+                {warning && (
+                  <div className="bg-yellow-50 border border-yellow-200 text-yellow-700 p-4 rounded-md flex items-start mb-4">
+                    <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm">{warning}</p>
+                  </div>
+                )}
+                
                 <div className="bg-blue-50 border border-blue-200 text-blue-700 p-4 rounded-md flex flex-col">
                   <p className="font-medium text-lg mb-3">Has sido invitado a unirte a un equipo</p>
                   
@@ -205,28 +236,44 @@ export default function AcceptInvitationPage() {
                   </p>
                 </div>
                 
-                <div className="flex flex-col space-y-3">
-                  <Button
-                    onClick={acceptInvitation}
-                    disabled={accepting}
-                    className="w-full bg-uicore-green hover:bg-uicore-green/90 text-white"
-                  >
-                    {accepting ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Procesando...
-                      </>
-                    ) : (
-                      "Aceptar Invitación"
-                    )}
-                  </Button>
-                  
-                  <Button asChild variant="outline">
-                    <Link href="/dashboard">
-                      Cancelar
-                    </Link>
-                  </Button>
-                </div>
+                {requiresAuth ? (
+                  <div className="flex flex-col space-y-3">
+                    <Button
+                      onClick={redirectToLogin}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      <LogIn className="h-4 w-4 mr-2" />
+                      Iniciar sesión para aceptar
+                    </Button>
+                    
+                    <p className="text-xs text-center text-gray-500">
+                      Necesitas iniciar sesión con la cuenta asociada a {invitationDetails.email} para aceptar esta invitación.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col space-y-3">
+                    <Button
+                      onClick={acceptInvitation}
+                      disabled={accepting}
+                      className="w-full bg-uicore-green hover:bg-uicore-green/90 text-white"
+                    >
+                      {accepting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Procesando...
+                        </>
+                      ) : (
+                        "Aceptar Invitación"
+                      )}
+                    </Button>
+                    
+                    <Button asChild variant="outline">
+                      <Link href="/dashboard">
+                        Cancelar
+                      </Link>
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center py-8 text-gray-500">

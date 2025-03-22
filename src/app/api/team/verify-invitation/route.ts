@@ -6,13 +6,6 @@ import { cookies } from 'next/headers';
 // POST: Verifica los detalles de una invitación por token
 export async function POST(request: NextRequest) {
   try {
-    // Verificar autenticación
-    const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
-    if (!authUserId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     // Obtener el token de la invitación desde el cuerpo de la solicitud
     const { token } = await request.json();
     
@@ -44,24 +37,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'This invitation has expired' }, { status: 410 });
     }
 
-    // Obtener el email del usuario actual
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('email')
-      .eq('id', authUserId)
-      .single();
-
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    // Verificar si el email del usuario coincide con el de la invitación
-    if (userData.email.toLowerCase() !== invitation.email.toLowerCase()) {
-      return NextResponse.json({ 
-        error: 'This invitation was sent to a different email address' 
-      }, { status: 403 });
-    }
-
     // Obtener información de la tienda
     const { data: storeInfo, error: storeError } = await supabase
       .from('stores')
@@ -74,16 +49,42 @@ export async function POST(request: NextRequest) {
       // Continuar aunque no se obtenga la info de la tienda
     }
 
-    // Verificar si el usuario ya es miembro de esta tienda
-    const { data: existingMember } = await supabase
-      .from('store_users')
-      .select('id')
-      .eq('user_id', authUserId)
-      .eq('store_id', invitation.store_id)
-      .limit(1);
+    // Verificar si el usuario está autenticado (opcional)
+    const authUserId = (await cookies()).get('auth_user_id')?.value;
+    
+    if (authUserId) {
+      // Si está autenticado, comprobar si su email coincide
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('email')
+        .eq('id', authUserId)
+        .single();
 
-    if (existingMember && existingMember.length > 0) {
-      return NextResponse.json({ error: 'You are already a member of this store' }, { status: 409 });
+      if (!userError && userData) {
+        // Verificar si el email del usuario coincide con el de la invitación
+        if (userData.email.toLowerCase() !== invitation.email.toLowerCase()) {
+          return NextResponse.json({ 
+            warning: 'This invitation was sent to a different email address',
+            invitationEmail: invitation.email,
+            userEmail: userData.email
+          });
+        }
+
+        // Verificar si el usuario ya es miembro de esta tienda
+        const { data: existingMember } = await supabase
+          .from('store_users')
+          .select('id')
+          .eq('user_id', authUserId)
+          .eq('store_id', invitation.store_id)
+          .limit(1);
+
+        if (existingMember && existingMember.length > 0) {
+          return NextResponse.json({ 
+            warning: 'You are already a member of this store',
+            requiresAuth: false
+          });
+        }
+      }
     }
 
     return NextResponse.json({
@@ -93,7 +94,8 @@ export async function POST(request: NextRequest) {
         role: invitation.role,
         storeName: storeInfo?.name || `Tienda ${storeInfo?.store_id || 'desconocida'}`,
         expiresAt: invitation.expires_at
-      }
+      },
+      requiresAuth: !authUserId // Indicar si el usuario necesita autenticarse
     });
   } catch (error) {
     console.error('Error verifying invitation:', error);
