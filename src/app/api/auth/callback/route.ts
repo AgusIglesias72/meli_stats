@@ -86,21 +86,22 @@ export async function GET(request: NextRequest) {
     // Verificar si el usuario ya existe en nuestra base de datos
     let userId = authUserId;
     if (!userId) {
-      // Buscar si ya existe un usuario con este email
+      // Buscar si ya existe un usuario con este ID
       const { data: existingUser } = await supabase
         .from('users')
-        .select('id')
-        .eq('email', userData.email)
+        .select('user_id')
+        .eq('user_id', userData.id)
         .limit(1);
         
       if (existingUser && existingUser.length > 0) {
         // Si el usuario ya existe, usamos su ID
-        userId = existingUser[0].id;
+        userId = existingUser[0].user_id;
       } else {
         // Si no existe, creamos un nuevo usuario
         const { data: newUser, error: userError } = await supabase
           .from('users')
           .insert({
+            user_id: userData.id,
             email: userData.email,
             nickname: userData.nickname,
             first_name: userData.first_name || '',
