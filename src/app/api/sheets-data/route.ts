@@ -2,49 +2,47 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
-// Esta API key será utilizada para autenticar las solicitudes desde Google Apps Script
-// En un entorno de producción, deberías usar una solución más robusta
-const API_KEY = process.env.NEXT_PUBLIC_SHEETS_API_KEY || 'tu-clave-secreta-aqui';
-
 export async function GET(request: NextRequest) {
   try {
-    // Verificar que la solicitud tenga la API key correcta
+    // Obtener la API key del header de autorización
     const apiKey = request.headers.get('x-api-key');
-    if (!apiKey || apiKey !== API_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!apiKey) {
+      return NextResponse.json({ error: 'API key is required' }, { status: 401 });
     }
 
-    // Obtener el ID de usuario de Mercado Libre desde los parámetros
+    // Obtener el ID de la tienda desde los parámetros
     const searchParams = request.nextUrl.searchParams;
-    const mlUserId = searchParams.get('user_id');
+    const storeId = searchParams.get('store_id');
     
-    if (!mlUserId) {
-      return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
+    if (!storeId) {
+      return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
     }
 
-    // Obtener datos del usuario desde Supabase
+    // Crear cliente Supabase
     const supabase = createServerSupabaseClient();
     
-    const { data: userData, error: userError } = await supabase
-      .from('users')
+    // Verificar si la API key es válida para la tienda proporcionada
+    const { data: storeData, error: storeError } = await supabase
+      .from('stores')
       .select('id')
-      .eq('user_id', mlUserId)
+      .eq('store_id', storeId)
+      .eq('gsheets_api_key', apiKey)
       .single();
 
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    if (storeError || !storeData) {
+      return NextResponse.json({ error: 'Invalid API key or store ID' }, { status: 401 });
     }
 
-    // Obtener tipos de datos solicitados (items, tracked_items o ambos)
+    // Obtener el tipo de datos solicitados (items, tracked_items o ambos)
     const dataType = searchParams.get('type') || 'all';
-    const response: any = { user_id: mlUserId };
+    const response: any = { store_id: storeId };
 
-    // Obtener items del usuario si se solicitan
+    // Obtener items de la tienda si se solicitan
     if (dataType === 'all' || dataType === 'items') {
       const { data: items, error: itemsError } = await supabase
         .from('items')
         .select('*')
-        .eq('user_id', userData.id)
+        .eq('store_id', storeData.id)
         .order('last_updated', { ascending: false });
 
       if (itemsError) {
@@ -80,7 +78,7 @@ export async function GET(request: NextRequest) {
             last_updated
           )
         `)
-        .eq('user_id', userData.id)
+        .eq('store_id', storeData.id)
         .order('created_at', { ascending: false });
 
       if (trackedError) {
