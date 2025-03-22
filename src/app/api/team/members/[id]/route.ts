@@ -90,10 +90,10 @@ export async function PATCH(
 // DELETE: Elimina un miembro del equipo
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const memberId = params.id;
+    const memberId = (await params).id;
     
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
