@@ -6,10 +6,10 @@ import { cookies } from 'next/headers';
 // PATCH: Actualiza el rol de un miembro del equipo
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const memberId = params.id;
+    const memberId = (await params).id;
     
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
