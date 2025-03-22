@@ -62,10 +62,21 @@ export async function POST(request: NextRequest) {
     const expiryDate = new Date();
     expiryDate.setSeconds(expiryDate.getSeconds() + mlData.expires_in);
 
+    // Extraer los datos adicionales del usuario
+    const firstName = userData.first_name || '';
+    const lastName = userData.last_name || '';
+    const email = userData.email || '';
+    
+    // Extraer el número de identificación
+    let identificationNumber = '';
+    if (userData.identification && userData.identification.number) {
+      identificationNumber = userData.identification.number;
+    }
+
     // Crear conexión a Supabase
     const supabase = createServerSupabaseClient();
     
-    // Crear la tienda en Supabase
+    // Crear la tienda en Supabase con los datos adicionales
     const { data: store, error: storeError } = await supabase
       .from('stores')
       .insert({
@@ -74,7 +85,11 @@ export async function POST(request: NextRequest) {
         ml_user_id: userData.id,
         access_token: mlData.access_token,
         refresh_token: mlData.refresh_token,
-        token_expiry: expiryDate.toISOString()
+        token_expiry: expiryDate.toISOString(),
+        seller_first_name: firstName,
+        seller_last_name: lastName,
+        seller_email: email,
+        seller_identification_number: identificationNumber
       })
       .select()
       .single();
