@@ -5,11 +5,10 @@ import { cookies } from 'next/headers';
 // src/app/api/team/invitations/[id]/resend/route.ts
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const invitationId = params.id;
-    
+    const invitationId = (await params).id;
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
     
