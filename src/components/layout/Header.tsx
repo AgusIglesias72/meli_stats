@@ -1,9 +1,16 @@
-import React from "react";
+"use client";
+
+import React, { useState, useEffect } from 'react';
 import Link from "next/link";
+import { usePathname } from 'next/navigation';
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ChevronDown } from "lucide-react";
+import {
+  ChevronDown
+} from 'lucide-react';
+
+
 
 const UiCoreLogo = () => (
   <div className="flex items-center">
@@ -19,98 +26,85 @@ const UiCoreLogo = () => (
   </div>
 );
 
+interface NavItem {
+  title: string;
+  href: string;
+  active?: boolean;
+  adminOnly?: boolean;
+  subItems?: NavSubItem[];
+  badge?: string;
+}
+
 interface NavSubItem {
   title: string;
   href: string;
   description?: string;
 }
 
-interface NavItem {
-  title: string;
-  href: string;
-  subItems?: NavSubItem[];
-  badge?: string;
-}
-
-const mainNavItems: NavItem[] = [
-  {
-    title: "Templates",
-    href: "/templates",
-  },
-  {
-    title: "Features",
-    href: "#",
-    subItems: [
-      {
-        title: "Page Builder",
-        description: "Elementor - The Most Popular Page Builder.",
-        href: "#",
-      },
-      {
-        title: "Theme Builder",
-        description: "Control every part of your website.",
-        href: "#",
-      },
-      {
-        title: "Theme Options",
-        description: "Customize every bit of your website in a powerful new way.",
-        href: "#",
-      },
-      {
-        title: "Animations",
-        description: "Create stunning animations in just a few clicks.",
-        href: "#",
-      },
-      {
-        title: "Builder Widgets",
-        description: "Hundreds of widgets to help you build anything.",
-        href: "#",
-      },
-      {
-        title: "WooCommerce",
-        description: "Build a stunning online store effortlessly.",
-        href: "#",
-      },
-    ],
-  },
-  {
-    title: "Pricing",
-    href: "/pricing",
-  },
-  {
-    title: "Resources",
-    href: "#",
-    subItems: [
-      {
-        title: "Documentation",
-        href: "#",
-      },
-      {
-        title: "Support",
-        href: "#",
-      },
-      {
-        title: "Contact",
-        href: "#",
-      },
-      {
-        title: "Changelog",
-        href: "#",
-      },
-      {
-        title: "Suggest New Features",
-        href: "#",
-      },
-    ],
-  },
-  {
-    title: "Gutenberg",
-    href: "/gutenberg",
-    badge: "BETA",
-  },
-];
 
 export default function Header() {
+  const pathname = usePathname();
+  const [currentUserRole, setCurrentUserRole] = useState<string>('');
+  
+  // Obtener el rol del usuario actual
+  useEffect(() => {
+    const fetchUserRole = async () => {
+      try {
+        const response = await fetch('/api/stores/current');
+        if (response.ok) {
+          const data = await response.json();
+          setCurrentUserRole(data.role || '');
+        }
+      } catch (error) {
+        console.error('Error fetching user role:', error);
+      }
+    };
+    
+    fetchUserRole();
+  }, []); 
+
+  const isAdmin = currentUserRole === 'admin';
+  const isEditor = currentUserRole === 'editor';
+  const isViewer = currentUserRole === 'viewer';
+
+  const navItems: NavItem[] = [
+    {
+      title: 'Dashboard',
+      href: '/dashboard',
+      active: pathname === '/dashboard',
+      adminOnly: true
+    },
+    {
+      title: 'Team',
+      href: '/team',
+      active: pathname === '/team',
+      subItems: [
+        {
+          title: 'Team',
+          href: '/team',
+        },
+        {
+          title: 'Invitations',
+          href: '/team/invitations',
+        },
+        {
+          title: 'Members',
+          href: '/team/members',
+        },
+      ],
+    },
+    {
+      title: 'Templates',
+      href: '/templates',
+      active: pathname === '/templates'
+    },
+    {
+      title: 'Pricing',
+      href: '/pricing',
+      active: pathname === '/pricing'
+    }
+  ];
+  
   return (
     <header className="sticky top-0 z-50 w-full bg-white/95 backdrop-blur border-b border-gray-100">
       <div className="container mx-auto flex h-16 items-center justify-between px-4 md:px-8">
@@ -118,12 +112,12 @@ export default function Header() {
 
         <div className="hidden lg:flex lg:items-center lg:space-x-6">
           <nav className="flex items-center space-x-6">
-            {mainNavItems.map((item, index) => (
+            {navItems.map((item, index) => (
               <React.Fragment key={index}>
                 {item.subItems ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button className="flex items-center text-sm font-medium text-gray-700 hover:text-uicore-green transition-colors">
+                      <button className="flex cursor-pointer items-center text-sm font-medium text-gray-700 hover:text-uicore-green transition-colors">
                         {item.title} <ChevronDown className="ml-1 h-4 w-4" />
                       </button>
                     </DropdownMenuTrigger>
@@ -132,7 +126,7 @@ export default function Header() {
                         <DropdownMenuItem key={subIndex} asChild>
                           <Link
                             href={subItem.href}
-                            className="flex flex-col w-full py-2"
+                            className="flex flex-col w-full py-2 cursor-pointer"
                           >
                             <span className="font-medium">{subItem.title}</span>
                             {subItem.description && (
