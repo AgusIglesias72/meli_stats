@@ -1,10 +1,9 @@
-// src/app/api/team/invitations/[id]/route.ts
+// src/app/api/team/invitations/[id]/resend/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
-// DELETE: Cancela una invitación pendiente
-export async function DELETE(
+export async function POST(
   request: NextRequest,
   context: { params: { id: string } }
 ) {
@@ -25,7 +24,7 @@ export async function DELETE(
     // Obtener información de la invitación
     const { data: invitationInfo, error: invitationError } = await supabase
       .from('invitations')
-      .select('id, store_id')
+      .select('id, store_id, email, token, role')
       .eq('id', invitationId)
       .single();
 
@@ -45,28 +44,39 @@ export async function DELETE(
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
-    // Verificar si el usuario tiene rol suficiente para cancelar invitaciones
+    // Verificar si el usuario tiene rol suficiente para reenviar invitaciones
     if (!['owner', 'admin'].includes(userAccess.role)) {
-      return NextResponse.json({ error: 'You do not have permission to cancel invitations' }, { status: 403 });
+      return NextResponse.json({ error: 'You do not have permission to resend invitations' }, { status: 403 });
     }
 
-    // Eliminar la invitación
-    const { error: deleteError } = await supabase
+    // Extender la fecha de expiración (7 días más desde ahora)
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + 7);
+
+    // Actualizar la fecha de expiración
+    const { error: updateError } = await supabase
       .from('invitations')
-      .delete()
+      .update({
+        expires_at: expiryDate.toISOString(),
+        updated_at: new Date().toISOString()
+      })
       .eq('id', invitationId);
 
-    if (deleteError) {
-      console.error('Error canceling invitation:', deleteError);
-      return NextResponse.json({ error: 'Error canceling invitation' }, { status: 500 });
+    if (updateError) {
+      console.error('Error updating invitation:', updateError);
+      return NextResponse.json({ error: 'Error resending invitation' }, { status: 500 });
     }
+
+    // TODO: Reenviar el email con el enlace de invitación
+    // Esta parte requeriría un servicio de envío de emails
 
     return NextResponse.json({
       success: true,
-      message: 'Invitation canceled successfully'
+      message: 'Invitation resent successfully',
+      invitation_link: `${process.env.NEXT_PUBLIC_APP_URL}/accept-invitation?token=${invitationInfo.token}`
     });
   } catch (error) {
-    console.error('Error canceling invitation:', error);
+    console.error('Error resending invitation:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
