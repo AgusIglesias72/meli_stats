@@ -50,7 +50,8 @@ export async function GET(request: NextRequest) {
           regular_amount,
           amount,
           currency_id,
-          category_id
+          category_id,
+          permalink
           `)
         .eq('store_id', storeData.id)
         .order('last_updated', { ascending: false });
@@ -81,6 +82,7 @@ export async function GET(request: NextRequest) {
             regular_amount,
             amount,
             currency_id,
+            seller_nickname,
             brand,
             last_updated
           )
