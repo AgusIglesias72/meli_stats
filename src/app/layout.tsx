@@ -10,10 +10,24 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "UiCore PRO - The only WordPress theme you'll ever need",
-  description: "Create unlimited websites, tailor themes to your brand, and access all UiCore Framework features with our affordable yearly subscription.",
+  title: "MELI - Green Deco",
+  description: "Sistema de monitoreo y seguimiento de productos en Mercado Libre para Green Deco",
+  icons: {
+    icon: "/favicon.ico",
+  },
+  viewport: "width=device-width, initial-scale=1",
+  applicationName: "MELI Manager",
+  authors: [
+    {
+      name: "Green Deco Team",
+    },
+  ],
+  colorScheme: "light dark",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#18d096" },
+    { media: "(prefers-color-scheme: dark)", color: "#111213" },
+  ],
 };
-
 export default function RootLayout({
   children,
 }: Readonly<{
