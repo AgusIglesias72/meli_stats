@@ -1,3 +1,4 @@
+// src/app/api/tracked-items/update/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
@@ -66,6 +67,35 @@ export async function POST(request: NextRequest) {
           }
 
           const itemData = await itemResponse.json();
+          
+          // Obtener información del vendedor
+          let sellerId = itemData.seller_id;
+          let sellerNickname = '';
+          
+          try {
+            const sellerResponse = await fetch(`https://api.mercadolibre.com/users/${sellerId}`, {
+              headers: {
+                'Authorization': `Bearer ${userData.access_token}`
+              }
+            });
+            
+            if (sellerResponse.ok) {
+              const sellerData = await sellerResponse.json();
+              sellerNickname = sellerData.nickname || '';
+              
+              // Actualizar información del vendedor en tracked_items_config
+              await supabase
+                .from('tracked_items_config')
+                .update({
+                  seller_id: sellerId,
+                  seller_nickname: sellerNickname
+                })
+                .eq('id', trackedItem.id);
+            }
+          } catch (error) {
+            console.error(`Error fetching seller info for item ${trackedItem.item_id}:`, error);
+            // Continuamos incluso si hay error al obtener datos del vendedor
+          }
 
           // Obtener información del precio de venta
           const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${trackedItem.item_id}/sale_price`, {
@@ -78,6 +108,15 @@ export async function POST(request: NextRequest) {
           if (salePriceResponse.ok) {
             salePriceData = await salePriceResponse.json();
           }
+          
+          // Extraer la marca de los atributos si existe
+          let brand = null;
+          if (itemData.attributes && Array.isArray(itemData.attributes)) {
+            const brandAttribute = itemData.attributes.find((attr: any) => attr.id === 'BRAND'); 
+            if (brandAttribute && brandAttribute.value_name) {
+              brand = brandAttribute.value_name;
+            }
+          }
 
           // Guardar los datos actualizados en tracked_items_data
           const { error: insertError } = await supabase
@@ -88,6 +127,7 @@ export async function POST(request: NextRequest) {
               site_id: itemData.site_id,
               title: itemData.title,
               seller_id: itemData.seller_id,
+              seller_nickname: sellerNickname,
               category_id: itemData.category_id,
               official_store_id: itemData.official_store_id,
               price: itemData.price,
@@ -99,6 +139,7 @@ export async function POST(request: NextRequest) {
               status: itemData.status,
               regular_amount: salePriceData?.regular_amount || null,
               amount: salePriceData?.amount || null,
+              brand: brand,
               last_updated: new Date().toISOString()
             });
 

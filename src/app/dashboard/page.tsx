@@ -26,6 +26,8 @@ interface Item {
   permalink: string;
   thumbnail: string;
   category_id: string;
+  seller_id?: string;        // Añadido el ID del vendedor
+  seller_nickname?: string;  // Añadido el nombre del vendedor
   last_updated: string;
 }
 
@@ -34,6 +36,8 @@ interface TrackedItem {
   item_id: string;
   notes: string | null;
   created_at: string;
+  seller_id?: string;        // Añadido el ID del vendedor
+  seller_nickname?: string;  // Añadido el nombre del vendedor
   data: {
     id: string;
     title: string;
@@ -47,6 +51,9 @@ interface TrackedItem {
     permalink: string;
     thumbnail: string;
     category_id?: string;
+    seller_id?: string;      // Añadido el ID del vendedor
+    seller_nickname?: string; // Añadido el nombre del vendedor
+    brand?: string;
     last_updated: string;
   } | null;
 }

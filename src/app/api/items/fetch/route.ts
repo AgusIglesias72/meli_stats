@@ -52,6 +52,24 @@ export async function POST(request: NextRequest) {
 
     const itemData = await itemResponse.json();
 
+    // Obtener información del vendedor
+    let sellerNickname = '';
+    try {
+      const sellerResponse = await fetch(`https://api.mercadolibre.com/users/${itemData.seller_id}`, {
+        headers: {
+          'Authorization': `Bearer ${userData.access_token}`
+        }
+      });
+      
+      if (sellerResponse.ok) {
+        const sellerData = await sellerResponse.json();
+        sellerNickname = sellerData.nickname || '';
+      }
+    } catch (error) {
+      console.error('Error fetching seller info:', error);
+      // Continuamos incluso si hay error al obtener datos del vendedor
+    }
+
     // Obtener información del precio de venta
     const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
       headers: {
@@ -78,6 +96,7 @@ export async function POST(request: NextRequest) {
       site_id: itemData.site_id,
       title: itemData.title,
       seller_id: itemData.seller_id,
+      seller_nickname: sellerNickname,
       category_id: itemData.category_id,
       official_store_id: itemData.official_store_id,
       price: itemData.price,

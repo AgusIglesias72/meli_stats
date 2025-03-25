@@ -14,6 +14,8 @@ interface TrackedItem {
   item_id: string;
   notes: string | null;
   created_at: string;
+  seller_id?: string;
+  seller_nickname?: string;
   data: {
     id: string;
     title: string;
@@ -27,6 +29,8 @@ interface TrackedItem {
     permalink: string;
     thumbnail: string;
     category_id?: string;
+    seller_id?: string;
+    seller_nickname?: string;
     brand?: string;
     last_updated: string;
   } | null;
@@ -107,7 +111,9 @@ export default function TrackedItemsTab({
       result = result.filter(item => 
         (item.data?.title?.toLowerCase().includes(query)) || 
         item.item_id.toLowerCase().includes(query) ||
-        (item.notes?.toLowerCase().includes(query))
+        (item.notes?.toLowerCase().includes(query)) ||
+        (item.seller_nickname && item.seller_nickname.toLowerCase().includes(query)) || // Búsqueda por vendedor en config
+        (item.data?.seller_nickname && item.data.seller_nickname.toLowerCase().includes(query)) // Búsqueda por vendedor en data
       );
     }
     
@@ -243,6 +249,8 @@ export default function TrackedItemsTab({
                 last_updated={item.data?.last_updated || item.created_at}
                 notes={item.notes}
                 brand={item.data?.brand}
+                seller_nickname={item.data?.seller_nickname || item.seller_nickname} // Usar seller_nickname de data o config
+                seller_id={item.data?.seller_id || item.seller_id} // Usar seller_id de data o config
                 onRemove={removeTrackedItem}
                 formatCurrency={formatCurrency}
                 formatDate={formatDate}

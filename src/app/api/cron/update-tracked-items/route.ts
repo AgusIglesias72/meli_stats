@@ -135,10 +135,10 @@ export async function POST(request: NextRequest) {
           batch.map(async (item) => {
             try {
               // Obtener datos del item desde la API de ML
-              const { itemData, salePriceData } = await fetchItemData(item.item_id, storeData.access_token);
+              const { itemData, salePriceData, sellerNickname } = await fetchItemData(item.item_id, storeData.access_token);
               
               // Guardar en tracked_items_data
-              await saveItemData(supabase, item.id, { itemData, salePriceData });
+              await saveItemData(supabase, item.id, { itemData, salePriceData, sellerNickname });
               
               return { success: true } as ItemProcessResult;
             } catch (error) {
@@ -177,7 +177,11 @@ export async function POST(request: NextRequest) {
 }
 
 // Función para obtener datos de un item desde la API de ML
-async function fetchItemData(itemId: string, accessToken: string): Promise<{ itemData: ItemData; salePriceData: SalePriceData | null }> {
+async function fetchItemData(itemId: string, accessToken: string): Promise<{ 
+  itemData: ItemData; 
+  salePriceData: SalePriceData | null;
+  sellerNickname: string;
+}> {
   const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
     headers: {
       'Authorization': `Bearer ${accessToken}`
@@ -189,6 +193,24 @@ async function fetchItemData(itemId: string, accessToken: string): Promise<{ ite
   }
 
   const itemData = await itemResponse.json() as ItemData;
+  
+  // Obtener información del vendedor
+  let sellerNickname = '';
+  try {
+    const sellerResponse = await fetch(`https://api.mercadolibre.com/users/${itemData.seller_id}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    
+    if (sellerResponse.ok) {
+      const sellerData = await sellerResponse.json();
+      sellerNickname = sellerData.nickname || '';
+    }
+  } catch (error) {
+    console.error(`Error fetching seller info for item ${itemId}:`, error);
+    // Continuamos incluso si hay error al obtener datos del vendedor
+  }
   
   // Obtener información del precio de venta
   const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
@@ -202,14 +224,18 @@ async function fetchItemData(itemId: string, accessToken: string): Promise<{ ite
     salePriceData = await salePriceResponse.json() as SalePriceData;
   }
   
-  return { itemData, salePriceData };
+  return { itemData, salePriceData, sellerNickname };
 }
 
 // Función para guardar datos en tracked_items_data
 async function saveItemData(
   supabase: any,
   configId: string, 
-  { itemData, salePriceData }: { itemData: ItemData; salePriceData: SalePriceData | null }
+  { itemData, salePriceData, sellerNickname }: { 
+    itemData: ItemData; 
+    salePriceData: SalePriceData | null;
+    sellerNickname: string;
+  }
 ) {
   let brand: string | null = null;
   if (itemData.attributes && Array.isArray(itemData.attributes)) {
@@ -219,6 +245,15 @@ async function saveItemData(
     }
   }
 
+  // Actualizar también la información del vendedor en tracked_items_config
+  await supabase
+    .from('tracked_items_config')
+    .update({
+      seller_id: itemData.seller_id,
+      seller_nickname: sellerNickname
+    })
+    .eq('id', configId);
+
   return supabase
     .from('tracked_items_data')
     .insert({
@@ -227,6 +262,7 @@ async function saveItemData(
       site_id: itemData.site_id,
       title: itemData.title,
       seller_id: itemData.seller_id,
+      seller_nickname: sellerNickname,
       category_id: itemData.category_id,
       official_store_id: itemData.official_store_id,
       price: itemData.price,

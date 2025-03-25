@@ -23,6 +23,8 @@ interface Item {
   permalink: string;
   thumbnail: string;
   category_id: string;
+  seller_id?: string;
+  seller_nickname?: string;
   last_updated: string;
 }
 
@@ -100,7 +102,8 @@ export default function ProductsTab({
       const query = searchQuery.toLowerCase();
       result = result.filter(item => 
         item.title.toLowerCase().includes(query) || 
-        item.item_id.toLowerCase().includes(query)
+        item.item_id.toLowerCase().includes(query) ||
+        (item.seller_nickname && item.seller_nickname.toLowerCase().includes(query)) // También buscar por vendedor
       );
     }
     
@@ -243,6 +246,8 @@ export default function ProductsTab({
                 thumbnail={item.thumbnail}
                 permalink={item.permalink}
                 status={item.status}
+                seller_nickname={item.seller_nickname} // Pasamos el seller_nickname
+                seller_id={item.seller_id} // Pasamos el seller_id
                 last_updated={item.last_updated}
                 formatCurrency={formatCurrency}
                 formatDate={formatDate}
