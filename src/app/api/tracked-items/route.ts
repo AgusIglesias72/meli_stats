@@ -208,7 +208,7 @@ export async function POST(request: NextRequest) {
         const itemData = await itemResponse.json();
 
         // Obtener información del vendedor
-        let sellerId = itemData.seller_id;
+        const sellerId = itemData.seller_id;
         let sellerNickname = '';
 
         try {
