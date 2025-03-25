@@ -151,53 +151,63 @@ export async function POST(request: NextRequest) {
         const results = await Promise.allSettled(
           group.map(async (item) => {
             try {
-              // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
-              const itemResponse = await fetch(`https://api.mercadolibre.com/items/${item.item_id}`, {
-                headers: {
-                  'Authorization': `Bearer ${storeData.access_token}`
+                // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
+                const itemResponse = await fetch(`https://api.mercadolibre.com/items/${item.item_id}`, {
+                  headers: {
+                    'Authorization': `Bearer ${storeData.access_token}`
+                  }
+                });
+              
+                // Si la respuesta no es exitosa, manejar el error directamente sin intentar parsearlo como JSON
+                if (!itemResponse.ok) {
+                  const errorMessage = `Error API: ${itemResponse.status} - ${itemResponse.statusText}`;
+                  
+                  // Actualizar el estado del item a error
+                  await supabase
+                    .from('tracked_items_config')
+                    .update({
+                      processing_status: 'error',
+                      processing_message: errorMessage
+                    })
+                    .eq('id', item.id);
+                    
+                  detailedErrors.push({
+                    id: item.item_id,
+                    error: errorMessage
+                  });
+                    
+                  throw new Error(`Error fetching item ${item.item_id}: ${itemResponse.statusText}`);
                 }
-              });
-
-              // IMPORTANTE: Verificar si la respuesta es JSON antes de procesarla
-              const contentType = itemResponse.headers.get('content-type');
-              if (!contentType || !contentType.includes('application/json')) {
-                const errorText = await itemResponse.text();
-                // Actualizar el estado del item a error
-                await supabase
-                  .from('tracked_items_config')
-                  .update({
-                    processing_status: 'error',
-                    processing_message: `Respuesta no es JSON: ${itemResponse.status} - ${errorText.substring(0, 100)}`
-                  })
-                  .eq('id', item.id);
+              
+                // AHORA verificamos si la respuesta es JSON antes de procesarla
+                const contentType = itemResponse.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                  const errorText = await itemResponse.text().catch(() => 'No text content');
+                  const errorMessage = `Respuesta no es JSON: ${itemResponse.status} - ${errorText.substring(0, 100)}`;
                   
-                detailedErrors.push({
-                  id: item.item_id,
-                  error: `Respuesta no es JSON: ${itemResponse.status}`
+                  // Actualizar el estado del item a error
+                  await supabase
+                    .from('tracked_items_config')
+                    .update({
+                      processing_status: 'error',
+                      processing_message: errorMessage
+                    })
+                    .eq('id', item.id);
+                    
+                  detailedErrors.push({
+                    id: item.item_id,
+                    error: errorMessage
+                  });
+                    
+                  throw new Error(`Respuesta no es JSON para item ${item.item_id}: ${itemResponse.status}`);
+                }
+              
+                // Solo si llegamos aquí, intentamos parsear como JSON
+                const itemData = await itemResponse.json().catch(parseError => {
+                  const errorMessage = `Error parsing JSON: ${parseError.message}`;
+                  throw new Error(errorMessage);
                 });
-                  
-                throw new Error(`Respuesta no es JSON para item ${item.item_id}: ${itemResponse.status}`);
-              }
-
-              if (!itemResponse.ok) {
-                // Actualizar el estado del item a error
-                await supabase
-                  .from('tracked_items_config')
-                  .update({
-                    processing_status: 'error',
-                    processing_message: `Error API: ${itemResponse.status} - ${itemResponse.statusText}`
-                  })
-                  .eq('id', item.id);
-                  
-                detailedErrors.push({
-                  id: item.item_id,
-                  error: `Error API: ${itemResponse.status} - ${itemResponse.statusText}`
-                });
-                  
-                throw new Error(`Error fetching item ${item.item_id}: ${itemResponse.statusText}`);
-              }
-
-              const itemData = await itemResponse.json();
+              
 
               // Obtener información del vendedor
               const sellerId = itemData.seller_id;

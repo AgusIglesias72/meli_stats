@@ -244,16 +244,19 @@ export default function BulkImportTab({ onImportComplete }: BulkImportProps) {
         throw new Error(errorData.error || 'Error en la importación masiva');
       }
       
-      const responseData = await response.json();
-      
-      // Update results with API response
-      results.new = responseData.results.new || 0;
-      results.existing = responseData.results.existing || 0;
-      results.successful = responseData.results.successful || 0;
-      results.failed = responseData.results.failed || 0;
-      results.errors = responseData.results.errors || [];
-      results.inProgress = false;
-      results.progress = 100;
+    // Reemplaza la parte de actualización de resultados en startBulkImport
+    const responseData = await response.json().catch(err => {
+        throw new Error('Error al procesar la respuesta: ' + err.message);
+    });
+    
+    // Asegúrate de inicializar todos los valores para evitar NaN o undefined
+    results.new = responseData.results?.new || 0;
+    results.existing = responseData.results?.existing || 0;
+    results.successful = responseData.results?.successful || 0;
+    results.failed = responseData.results?.failed || 0;
+    results.errors = responseData.results?.errors || [];
+    results.inProgress = false;
+    results.progress = 100;
       
       setImportResults({ ...results });
       
