@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Loader2, Upload, Clipboard, AlertCircle, FileText, Check, X } from 'lucide-react';
+import { Loader2, Upload, Clipboard, AlertCircle, FileText, Check, X, ChevronDown, ChevronUp } from 'lucide-react';
 import Toast from '@/components/ui/toast';
 import Papa from 'papaparse';
 
@@ -18,13 +18,15 @@ export default function BulkImportTab({ onImportComplete }: BulkImportProps) {
   const [fileSelected, setFileSelected] = useState<boolean>(false);
   const [fileName, setFileName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showDetailedErrors, setShowDetailedErrors] = useState(false);
   const [importResults, setImportResults] = useState<{
     total: number;
+    new: number;
+    existing: number;
     successful: number;
     failed: number;
     progress: number;
     inProgress: boolean;
-    ignored: number;
     errors: Array<{ id: string; error: string }>;
   } | null>(null);
   
@@ -216,11 +218,12 @@ export default function BulkImportTab({ onImportComplete }: BulkImportProps) {
       // Initialize results tracking
       const results = {
         total: productIds.length,
+        new: 0,
+        existing: 0,
         successful: 0,
         failed: 0,
         progress: 0,
         inProgress: true,
-        ignored: extractedIds.invalid.length,
         errors: [] as Array<{ id: string; error: string }>
       };
       setImportResults(results);
@@ -244,8 +247,11 @@ export default function BulkImportTab({ onImportComplete }: BulkImportProps) {
       const responseData = await response.json();
       
       // Update results with API response
-      results.successful = responseData.results.new;
+      results.new = responseData.results.new || 0;
+      results.existing = responseData.results.existing || 0;
+      results.successful = responseData.results.successful || 0;
       results.failed = responseData.results.failed || 0;
+      results.errors = responseData.results.errors || [];
       results.inProgress = false;
       results.progress = 100;
       
@@ -253,7 +259,7 @@ export default function BulkImportTab({ onImportComplete }: BulkImportProps) {
       
       // Show success message
       if (results.failed === 0 && responseData.results.existing === 0) {
-        showToast('success', `¡Importación exitosa! Se han trackeado ${results.successful} productos.`);
+        showToast('success', `¡Importación exitosa! Se han agregado ${results.successful} productos.`);
       } else if (responseData.results.existing > 0) {
         showToast('info', `Importación completada. ${results.successful} productos añadidos. ${responseData.results.existing} ya estaban siendo trackeados.`);
       } else if (results.failed > 0) {
@@ -299,6 +305,11 @@ export default function BulkImportTab({ onImportComplete }: BulkImportProps) {
       setImporting(false);
       showToast('info', 'Importación cancelada. Algunos productos pueden haber sido importados.');
     }
+  };
+  
+  // Función para mostrar u ocultar detalles de errores
+  const toggleDetailedErrors = () => {
+    setShowDetailedErrors(!showDetailedErrors);
   };
   
   return (
@@ -353,31 +364,51 @@ export default function BulkImportTab({ onImportComplete }: BulkImportProps) {
                   <p className="font-medium">Exitosos</p>
                   <p>{importResults.successful}</p>
                 </div>
-                <div className="text-red-700">
+                <div className={importResults.failed > 0 ? "text-red-700" : "text-gray-700"}>
                   <p className="font-medium">Fallidos</p>
                   <p>{importResults.failed}</p>
                 </div>
-                <div className="text-yellow-700">
-                  <p className="font-medium">Ignorados</p>
-                  <p>{importResults.ignored}</p>
+                <div className={importResults.existing > 0 ? "text-blue-700" : "text-gray-700"}>
+                  <p className="font-medium">Ya Existentes</p>
+                  <p>{importResults.existing}</p>
                 </div>
               </div>
               
-              {importResults.errors.length > 0 && !importResults.inProgress && (
+              {!importResults.inProgress && importResults.errors && importResults.errors.length > 0 && (
                 <div className="mt-3">
-                  <p className="text-sm font-medium mb-1">Detalle de errores:</p>
-                  <div className="max-h-32 overflow-y-auto text-xs bg-white rounded border p-2">
-                    {importResults.errors.slice(0, 20).map((error, index) => (
-                      <div key={index} className="mb-1 pb-1 border-b border-gray-100 last:border-0">
-                        <span className="font-medium">{error.id}</span>: {error.error}
-                      </div>
-                    ))}
-                    {importResults.errors.length > 20 && (
-                      <div className="text-gray-500 italic">
-                        ...y {importResults.errors.length - 20} más
-                      </div>
-                    )}
+                  <div 
+                    className="flex justify-between items-center cursor-pointer bg-gray-100 p-2 rounded-md mb-2"
+                    onClick={toggleDetailedErrors}
+                  >
+                    <p className="text-sm font-medium">Detalles de errores ({importResults.errors.length})</p>
+                    {showDetailedErrors ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                   </div>
+                  
+                  {showDetailedErrors && (
+                    <div className="max-h-48 overflow-y-auto text-xs bg-white rounded border p-2">
+                      {importResults.errors.map((error, index) => (
+                        <div key={index} className="mb-1 pb-1 border-b border-gray-100 last:border-0">
+                          <span className="font-medium">{error.id}</span>: {error.error}
+                        </div>
+                      ))}
+                      {importResults.errors.length > 50 && (
+                        <div className="text-gray-500 italic text-center mt-2">
+                          ...y {importResults.failed - 50} más
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {!importResults.inProgress && (
+                <div className="mt-3 text-xs text-gray-700">
+                  <p>Completado. {importResults.new} nuevos ítems agregados para rastrear.</p>
+                  <p className="mt-1">
+                    {importResults.failed > 0 ? 
+                      `Nota: ${importResults.failed} ítems fallaron. Puedes ver los detalles arriba.` : 
+                      ''}
+                  </p>
                 </div>
               )}
             </div>
@@ -456,7 +487,8 @@ export default function BulkImportTab({ onImportComplete }: BulkImportProps) {
                 <li>Los IDs deben ser del formato MLA123456789 (ML seguido de una letra y números).</li>
                 <li>Si usas CSV, la primera columna debe contener los IDs, o usar cabeceras como "id", "item_id", "codigo", etc.</li>
                 <li>Los IDs que no tengan el formato correcto serán ignorados automáticamente.</li>
-                <li>Los productos ya trackeados serán ignorados (no generarán error).</li>
+                <li>Los productos ya trackeados serán identificados y no generarán error.</li>
+                <li>Si algunos productos fallan, se mostrarán los detalles para que puedas intentarlos individualmente.</li>
               </ul>
             </div>
             

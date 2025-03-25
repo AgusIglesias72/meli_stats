@@ -102,7 +102,8 @@ export async function POST(request: NextRequest) {
           total: itemIds.length,
           new: 0,
           existing: itemIds.length,
-          failed: 0
+          failed: 0,
+          errors: []
         }
       });
     }
@@ -114,7 +115,9 @@ export async function POST(request: NextRequest) {
       item_id: itemId,
       notes: null,
       seller_id: '', // Se actualizará después con los datos del vendedor
-      seller_nickname: ''
+      seller_nickname: '',
+      processing_status: 'pending', // Nuevo campo para seguimiento
+      processing_message: null      // Nuevo campo para mensajes de error
     }));
 
     // Insertar todos los nuevos items de una sola vez
@@ -133,6 +136,7 @@ export async function POST(request: NextRequest) {
     if (insertedItems && insertedItems.length > 0) {
       const batchSize = 10; // Procesar en lotes más pequeños para no sobrecargar la API
       const itemGroups = [];
+      const detailedErrors: { id: any; error: any; }[] = [];
       
       // Agrupar items para procesar en lotes
       for (let i = 0; i < insertedItems.length; i += batchSize) {
@@ -154,7 +158,42 @@ export async function POST(request: NextRequest) {
                 }
               });
 
+              // IMPORTANTE: Verificar si la respuesta es JSON antes de procesarla
+              const contentType = itemResponse.headers.get('content-type');
+              if (!contentType || !contentType.includes('application/json')) {
+                const errorText = await itemResponse.text();
+                // Actualizar el estado del item a error
+                await supabase
+                  .from('tracked_items_config')
+                  .update({
+                    processing_status: 'error',
+                    processing_message: `Respuesta no es JSON: ${itemResponse.status} - ${errorText.substring(0, 100)}`
+                  })
+                  .eq('id', item.id);
+                  
+                detailedErrors.push({
+                  id: item.item_id,
+                  error: `Respuesta no es JSON: ${itemResponse.status}`
+                });
+                  
+                throw new Error(`Respuesta no es JSON para item ${item.item_id}: ${itemResponse.status}`);
+              }
+
               if (!itemResponse.ok) {
+                // Actualizar el estado del item a error
+                await supabase
+                  .from('tracked_items_config')
+                  .update({
+                    processing_status: 'error',
+                    processing_message: `Error API: ${itemResponse.status} - ${itemResponse.statusText}`
+                  })
+                  .eq('id', item.id);
+                  
+                detailedErrors.push({
+                  id: item.item_id,
+                  error: `Error API: ${itemResponse.status} - ${itemResponse.statusText}`
+                });
+                  
                 throw new Error(`Error fetching item ${item.item_id}: ${itemResponse.statusText}`);
               }
 
@@ -171,23 +210,30 @@ export async function POST(request: NextRequest) {
                   }
                 });
                 
-                if (sellerResponse.ok) {
+                // Verificar si la respuesta del vendedor es JSON
+                const sellerContentType = sellerResponse.headers.get('content-type');
+                if (!sellerContentType || !sellerContentType.includes('application/json')) {
+                  console.warn(`Respuesta de vendedor no es JSON para item ${item.item_id}`);
+                  // Continuamos pero sin información del vendedor
+                } else if (sellerResponse.ok) {
                   const sellerData = await sellerResponse.json();
                   sellerNickname = sellerData.nickname || '';
-                  
-                  // Actualizar tracked_items_config con la información del vendedor
-                  await supabase
-                    .from('tracked_items_config')
-                    .update({
-                      seller_id: sellerId,
-                      seller_nickname: sellerNickname
-                    })
-                    .eq('id', item.id);
                 }
               } catch (error) {
                 console.error(`Error fetching seller info for item ${item.item_id}:`, error);
                 // Continuamos incluso si hay error al obtener datos del vendedor
               }
+
+              // Actualizar tracked_items_config con la información del vendedor y estado de éxito
+              await supabase
+                .from('tracked_items_config')
+                .update({
+                  seller_id: sellerId,
+                  seller_nickname: sellerNickname,
+                  processing_status: 'success',
+                  processing_message: null
+                })
+                .eq('id', item.id);
 
               // Extraer la marca de los atributos si existe
               let brand = null;
@@ -199,19 +245,26 @@ export async function POST(request: NextRequest) {
               }
 
               // Obtener información del precio de venta
-              const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${item.item_id}/sale_price`, {
-                headers: {
-                  'Authorization': `Bearer ${storeData.access_token}`
-                }
-              });
-
               let salePriceData = null;
-              if (salePriceResponse.ok) {
-                salePriceData = await salePriceResponse.json();
+              try {
+                const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${item.item_id}/sale_price`, {
+                  headers: {
+                    'Authorization': `Bearer ${storeData.access_token}`
+                  }
+                });
+
+                // Verificar si la respuesta del precio es JSON
+                const priceContentType = salePriceResponse.headers.get('content-type');
+                if (priceContentType && priceContentType.includes('application/json') && salePriceResponse.ok) {
+                  salePriceData = await salePriceResponse.json();
+                }
+              } catch (error) {
+                console.error(`Error fetching sale price for item ${item.item_id}:`, error);
+                // Continuamos incluso si hay error al obtener el precio
               }
 
               // Guardar los datos en tracked_items_data
-              await supabase
+              const { error: dataInsertError } = await supabase
                 .from('tracked_items_data')
                 .insert({
                   config_id: item.id,
@@ -233,19 +286,57 @@ export async function POST(request: NextRequest) {
                   amount: salePriceData?.amount || null,
                   brand: brand,
                   last_updated: new Date().toISOString(),
-                  created_at: new Date().toISOString() // Agregamos el campo created_at
+                  created_at: new Date().toISOString()
                 });
               
+              if (dataInsertError) {
+                console.error(`Error inserting data for item ${item.item_id}:`, dataInsertError);
+                // Actualizar el estado del item en caso de error al insertar datos
+                await supabase
+                  .from('tracked_items_config')
+                  .update({
+                    processing_status: 'error_data',
+                    processing_message: `Error al guardar datos: ${dataInsertError.message}`
+                  })
+                  .eq('id', item.id);
+                  
+                throw new Error(`Error inserting data for item ${item.item_id}: ${dataInsertError.message}`);
+              }
+              
               return { success: true };
-            } catch (error) {
-              console.error(`Error fetching data for item ${item.item_id}:`, error);
-              return { success: false };
+            } catch (error: any) {
+              console.error(`Error processing item ${item.item_id}:`, error);
+              
+              // Si no se actualizó el estado anteriormente, hacerlo ahora
+              await supabase
+                .from('tracked_items_config')
+                .update({
+                  processing_status: 'error',
+                  processing_message: error.message || 'Unknown error'
+                })
+                .eq('id', item.id);
+                
+              // Añadir a la lista de errores detallados si no se añadió antes
+              if (!detailedErrors.some(e => e.id === item.item_id)) {
+                detailedErrors.push({
+                  id: item.item_id,
+                  error: error.message || 'Unknown error'
+                });
+              }
+              
+              return { success: false, error: error.message || 'Unknown error' };
             }
           })
         );
         
-        fetchSuccess += results.filter(r => r.status === 'fulfilled' && (r.value as any).success).length;
-        fetchFailed += results.filter(r => r.status === 'rejected' || !(r.value as any)?.success).length;
+        // Contar los éxitos y fallos en este lote
+        fetchSuccess += results.filter(r => 
+          r.status === 'fulfilled' && (r.value as any).success
+        ).length;
+        
+        fetchFailed += results.filter(r => 
+          r.status === 'rejected' || !(r.value as any)?.success
+        ).length;
         
         // Pequeña pausa entre grupos para evitar rate limits
         if (itemGroups.indexOf(group) < itemGroups.length - 1) {
@@ -253,7 +344,19 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      console.log(`Fetch data results: ${fetchSuccess} successful, ${fetchFailed} failed`);
+      // Preparar respuesta con información detallada
+      return NextResponse.json({
+        success: true,
+        message: 'Bulk import processed successfully',
+        results: {
+          total: itemIds.length,
+          new: insertedItems.length,
+          existing: existingItemsMap.size,
+          successful: fetchSuccess,
+          failed: fetchFailed,
+          errors: detailedErrors.slice(0, 50) // Limitamos a 50 errores para no sobrecargar la respuesta
+        }
+      });
     }
 
     // Preparar respuesta
@@ -264,11 +367,15 @@ export async function POST(request: NextRequest) {
         total: itemIds.length,
         new: insertedItems?.length || 0,
         existing: existingItemsMap.size,
-        failed: 0
+        failed: 0,
+        errors: []
       }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error processing bulk import request:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ 
+      error: 'Internal server error',
+      message: error.message || 'Unknown error' 
+    }, { status: 500 });
   }
 }
