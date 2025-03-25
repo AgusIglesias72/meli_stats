@@ -275,6 +275,7 @@ async function saveItemData(
       regular_amount: salePriceData?.regular_amount || null,
       amount: salePriceData?.amount || null,
       brand: brand,
-      last_updated: new Date().toISOString()
+      last_updated: new Date().toISOString(),
+      created_at: new Date().toISOString()
     });
 }
