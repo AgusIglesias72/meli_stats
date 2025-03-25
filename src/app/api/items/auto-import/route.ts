@@ -1123,7 +1123,7 @@ export async function POST(request: NextRequest) {
     
 
     // Procesar cada ítem en lotes para no sobrecargar la API
-    const batchSize = 20;
+    const batchSize = 100;
     let importedCount = 0;
     let failedCount = 0;
 
