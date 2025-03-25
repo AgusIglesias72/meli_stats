@@ -176,15 +176,79 @@ export async function POST(request: NextRequest) {
         itemId: existingItem.id 
       }, { status: 409 });
     }
+  // Ahora, primero obtenemos los datos del ítem antes de insertarlo
+    // para asegurarnos de tener toda la información desde el principio
+    let itemData;
+    let salePriceData = null;
+    let sellerNickname = '';
+    let brand = null;
 
-    // Añadir el nuevo item a trackear
+    try {
+      // Obtener información del producto de Mercado Libre
+      const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
+        headers: {
+          'Authorization': `Bearer ${storeData.access_token}`
+        }
+      });
+
+      if (!itemResponse.ok) {
+        return NextResponse.json({ 
+          error: `Error fetching item: ${itemResponse.statusText}` 
+        }, { status: itemResponse.status });
+      }
+
+      itemData = await itemResponse.json();
+
+      // Obtener información del vendedor
+      if (itemData.seller_id) {
+        const sellerResponse = await fetch(`https://api.mercadolibre.com/users/${itemData.seller_id}`, {
+          headers: {
+            'Authorization': `Bearer ${storeData.access_token}`
+          }
+        });
+        
+        if (sellerResponse.ok) {
+          const sellerData = await sellerResponse.json();
+          sellerNickname = sellerData.nickname || '';
+        }
+      }
+
+      // Obtener información del precio de venta
+      const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
+        headers: {
+          'Authorization': `Bearer ${storeData.access_token}`
+        }
+      });
+
+      if (salePriceResponse.ok) {
+        salePriceData = await salePriceResponse.json();
+      }
+
+      // Extraer la marca de los atributos si existe
+      if (itemData.attributes && Array.isArray(itemData.attributes)) {
+        const brandAttribute = itemData.attributes.find((attr: any) => attr.id === 'BRAND'); 
+        if (brandAttribute && brandAttribute.value_name) {
+          brand = brandAttribute.value_name;
+        }
+      }
+    } catch (error) {
+      console.error(`Error fetching item data: ${error}`);
+      return NextResponse.json({ 
+        error: 'Error fetching item information from Mercado Libre' 
+      }, { status: 500 });
+    }
+
+    // Ahora que tenemos todos los datos, añadimos la configuración con la información del vendedor
     const { data: newItem, error: insertError } = await supabase
       .from('tracked_items_config')
       .insert({
         user_id: authUserId,
         store_id: selectedStoreId,
         item_id: itemId,
-        notes: notes || null
+        notes: notes || null,
+        seller_id: itemData.seller_id || '',
+        seller_nickname: sellerNickname || '',
+        processing_status: 'success' // Marcar como éxito en lugar de 'pending'
       })
       .select()
       .single();
@@ -194,97 +258,44 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Error adding item to track' }, { status: 500 });
     }
 
-    // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
-    // y guardarla en tracked_items_data inmediatamente
-    try {
-      const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
-        headers: {
-          'Authorization': `Bearer ${storeData.access_token}`
-        }
+    // Guardar los datos en tracked_items_data
+    await supabase
+      .from('tracked_items_data')
+      .insert({
+        config_id: newItem.id,
+        item_id: itemId,
+        site_id: itemData.site_id,
+        title: itemData.title,
+        seller_id: itemData.seller_id,
+        seller_nickname: sellerNickname,
+        category_id: itemData.category_id,
+        official_store_id: itemData.official_store_id,
+        price: itemData.price,
+        base_price: itemData.base_price,
+        currency_id: itemData.currency_id,
+        available_quantity: itemData.available_quantity,
+        permalink: itemData.permalink,
+        thumbnail: itemData.thumbnail,
+        status: itemData.status,
+        regular_amount: salePriceData?.regular_amount || null,
+        amount: salePriceData?.amount || null,
+        brand: brand,
+        last_updated: new Date().toISOString(),
+        created_at: new Date().toISOString()
       });
-
-      if (!itemResponse.ok) {
-        console.error(`Error fetching item ${itemId}: ${itemResponse.statusText}`);
-        // Continuamos aún si hay error, al menos el tracker fue creado
-      } else {
-        const itemData = await itemResponse.json();
-
-        // Obtener información del vendedor
-        const sellerId = itemData.seller_id;
-        let sellerNickname = '';
-
-        try {
-          const sellerResponse = await fetch(`https://api.mercadolibre.com/users/${sellerId}`, {
-            headers: {
-              'Authorization': `Bearer ${storeData.access_token}`
-            }
-          });
-          
-          if (sellerResponse.ok) {
-            const sellerData = await sellerResponse.json();
-            sellerNickname = sellerData.nickname || '';
-          }
-        } catch (error) {
-          console.error(`Error fetching seller info for item ${itemId}:`, error);
-          // Continuamos incluso si hay error al obtener datos del vendedor
-        }
-
-        // Extraer la marca de los atributos si existe
-        let brand = null;
-        if (itemData.attributes && Array.isArray(itemData.attributes)) {
-          const brandAttribute = itemData.attributes.find((attr: any) => attr.id === 'BRAND'); 
-          if (brandAttribute && brandAttribute.value_name) {
-            brand = brandAttribute.value_name;
-          }
-        }
-
-        // Obtener información del precio de venta
-        const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
-          headers: {
-            'Authorization': `Bearer ${storeData.access_token}`
-          }
-        });
-
-        let salePriceData = null;
-        if (salePriceResponse.ok) {
-          salePriceData = await salePriceResponse.json();
-        }
-
-        // Guardar los datos en tracked_items_data
-        await supabase
-          .from('tracked_items_data')
-          .insert({
-            config_id: newItem.id,
-            item_id: itemId,
-            site_id: itemData.site_id,
-            title: itemData.title,
-            seller_id: itemData.seller_id,
-            seller_nickname: sellerNickname,
-            category_id: itemData.category_id,
-            official_store_id: itemData.official_store_id,
-            price: itemData.price,
-            base_price: itemData.base_price,
-            currency_id: itemData.currency_id,
-            available_quantity: itemData.available_quantity,
-            permalink: itemData.permalink,
-            thumbnail: itemData.thumbnail,
-            status: itemData.status,
-            regular_amount: salePriceData?.regular_amount || null,
-            amount: salePriceData?.amount || null,
-            brand: brand,
-            last_updated: new Date().toISOString(),
-            created_at: new Date().toISOString() // Agregamos el campo created_at
-          });
-      }
-    } catch (dataError) {
-      console.error('Error fetching initial data for tracked item:', dataError);
-      // Continuamos aún si hay error, al menos el tracker fue creado
-    }
 
     return NextResponse.json({
       success: true,
       message: 'Item added to tracking',
-      item: newItem
+      item: {
+        ...newItem,
+        data: {
+          title: itemData.title,
+          price: itemData.price,
+          status: itemData.status,
+          seller_nickname: sellerNickname
+        }
+      }
     });
   } catch (error) {
     console.error('Error processing add tracked item request:', error);
