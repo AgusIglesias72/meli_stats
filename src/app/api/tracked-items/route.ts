@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
         )
       `, { count: 'exact' })
       .eq('user_id', userData.id)
+      .eq('processing_status', 'success')
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -70,6 +71,7 @@ export async function GET(request: NextRequest) {
     const processedItems = trackedItems.map(item => {
       const latestData = item.tracked_items_data && item.tracked_items_data.length > 0
         ? item.tracked_items_data[0] // Asumimos que el más reciente viene primero
+        
         : null;
 
       return {
