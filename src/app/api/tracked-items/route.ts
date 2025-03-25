@@ -302,3 +302,49 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+// DELETE: Elimina un item de la lista de trackeo
+export async function DELETE(request: NextRequest) {
+  try {
+    // Verificar autenticación
+    const authUserId = (await cookies()).get('auth_user_id')?.value;
+
+    if (!authUserId) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
+    
+    // Obtener el ID de la tienda seleccionada
+    const selectedStoreId = (await cookies()).get('selected_store_id')?.value;  
+
+    if (!selectedStoreId) {
+      return NextResponse.json({ error: 'ID de tienda no proporcionado' }, { status: 400 });
+    }
+
+    // Obtener el ID del item a eliminar desde el cuerpo de la solicitud
+    const { itemId } = await request.json();
+
+    if (!itemId) {
+      return NextResponse.json({ error: 'ID de item no proporcionado' }, { status: 400 });
+    }
+    
+    // Crear conexión a Supabase
+    const supabase = createServerSupabaseClient();
+
+    // Eliminar el item de la base de datos
+    const { error: deleteError } = await supabase
+      .from('tracked_items')
+      .delete()
+      .eq('item_id', itemId)
+      .eq('user_id', authUserId)
+      .eq('store_id', selectedStoreId);
+
+    if (deleteError) {
+      console.error('Error eliminando el item de seguimiento:', deleteError);
+      return NextResponse.json({ error: 'Error al eliminar el item de seguimiento' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, message: 'Item eliminado de seguimiento' });
+  } catch (error) {
+    console.error('Error procesando la solicitud de eliminación de item:', error);
+    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
+  }
+}
