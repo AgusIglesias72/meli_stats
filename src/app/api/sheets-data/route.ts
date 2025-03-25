@@ -41,7 +41,17 @@ export async function GET(request: NextRequest) {
     if (dataType === 'all' || dataType === 'items') {
       const { data: items, error: itemsError } = await supabase
         .from('items')
-        .select('*')
+        .select(`
+          item_id,
+          title,
+          available_quantity,
+          last_updated,
+          status,
+          regular_amount,
+          amount,
+          currency_id,
+          category_id
+          `)
         .eq('store_id', storeData.id)
         .order('last_updated', { ascending: false });
 
@@ -64,10 +74,7 @@ export async function GET(request: NextRequest) {
           created_at,
           tracked_items_data (
             id,
-            price,
-            base_price,
             title,
-            available_quantity,
             status,
             thumbnail,
             permalink,
@@ -79,6 +86,7 @@ export async function GET(request: NextRequest) {
           )
         `)
         .eq('store_id', storeData.id)
+        .eq('processing_status', 'success')
         .order('created_at', { ascending: false });
 
       if (trackedError) {
