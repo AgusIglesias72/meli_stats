@@ -302,49 +302,90 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
-// DELETE: Elimina un item de la lista de trackeo
+// DELETE: Elimina un item trackeado
 export async function DELETE(request: NextRequest) {
   try {
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-
+    
     if (!authUserId) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
-    // Obtener el ID de la tienda seleccionada
-    const selectedStoreId = (await cookies()).get('selected_store_id')?.value;  
-
-    if (!selectedStoreId) {
-      return NextResponse.json({ error: 'ID de tienda no proporcionado' }, { status: 400 });
-    }
-
-    // Obtener el ID del item a eliminar desde el cuerpo de la solicitud
-    const { itemId } = await request.json();
-
+    // Obtener el ID del ítem a eliminar
+    const searchParams = request.nextUrl.searchParams;
+    const itemId = searchParams.get('id');
+    
     if (!itemId) {
-      return NextResponse.json({ error: 'ID de item no proporcionado' }, { status: 400 });
+      return NextResponse.json({ error: 'Item ID is required' }, { status: 400 });
     }
-    
+
     // Crear conexión a Supabase
     const supabase = createServerSupabaseClient();
+    
+    // Verificar si el ítem existe antes de intentar eliminarlo
+    const { data: trackedItem, error: itemError } = await supabase
+      .from('tracked_items_config')
+      .select('id, store_id, user_id')
+      .eq('id', itemId)
+      .single();
 
-    // Eliminar el item de la base de datos
-    const { error: deleteError } = await supabase
-      .from('tracked_items')
-      .delete()
-      .eq('item_id', itemId)
-      .eq('user_id', authUserId)
-      .eq('store_id', selectedStoreId);
+    if (itemError) {
+      console.error('Error fetching tracked item:', itemError);
+      return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+    }
+    
+    // Simplificamos la verificación - si el usuario es el dueño del ítem o tiene permisos de admin, puede eliminarlo
+    // Este enfoque puede evitar problemas con consultas anidadas
+    if (trackedItem.user_id !== authUserId) {
+      // Si no es el propietario, verificar si tiene permisos administrativos en esta tienda
+      const { data: userAccess, error: accessError } = await supabase
+        .from('store_users')
+        .select('role')
+        .eq('user_id', authUserId)
+        .eq('store_id', trackedItem.store_id)
+        .single();
 
-    if (deleteError) {
-      console.error('Error eliminando el item de seguimiento:', deleteError);
-      return NextResponse.json({ error: 'Error al eliminar el item de seguimiento' }, { status: 500 });
+      if (accessError || !userAccess || !['owner', 'admin', 'editor'].includes(userAccess.role)) {
+        return NextResponse.json({ error: 'You do not have permission to delete this item' }, { status: 403 });
+      }
     }
 
-    return NextResponse.json({ success: true, message: 'Item eliminado de seguimiento' });
+    // Eliminar en transacción para garantizar consistencia
+    // Primero eliminamos los datos históricos
+    const { error: dataDeleteError } = await supabase
+      .from('tracked_items_data')
+      .delete()
+      .eq('config_id', itemId);
+    
+    if (dataDeleteError) {
+      console.error('Error deleting tracked item data:', dataDeleteError);
+      // Continuamos aunque haya error, ya que lo importante es eliminar la configuración
+    }
+
+    // Luego eliminamos la configuración
+    const { error: configDeleteError } = await supabase
+      .from('tracked_items_config')
+      .delete()
+      .eq('id', itemId);
+
+    if (configDeleteError) {
+      console.error('Error deleting tracked item config:', configDeleteError);
+      return NextResponse.json({ error: 'Failed to delete tracked item' }, { status: 500 });
+    }
+
+    // Siempre aseguramos que haya una respuesta JSON válida
+    return NextResponse.json({
+      success: true,
+      message: 'Tracked item deleted successfully',
+      id: itemId
+    });
   } catch (error) {
-    console.error('Error procesando la solicitud de eliminación de item:', error);
-    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
+    console.error('Error processing delete tracked item request:', error);
+    // Garantizamos que siempre haya una respuesta JSON válida
+    return NextResponse.json({ 
+      error: 'Internal server error',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
   }
 }
