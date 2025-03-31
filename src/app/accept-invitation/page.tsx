@@ -8,7 +8,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, AlertCircle, Check, LogIn } from 'lucide-react';
 import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 
 export default function AcceptInvitationPage() {
   const router = useRouter();
@@ -284,7 +283,6 @@ export default function AcceptInvitationPage() {
         </Card>
       </main>
       
-      <Footer />
     </div>
   );
 }
