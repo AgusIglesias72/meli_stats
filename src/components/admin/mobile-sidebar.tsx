@@ -10,7 +10,6 @@ import {
   LineChartIcon,
   MailIcon,
   PackageIcon,
-  PlusCircleIcon,
   SearchIcon,
   SettingsIcon,
   SheetIcon,
@@ -19,9 +18,20 @@ import {
   UsersIcon,
   XIcon,
 } from "lucide-react";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Separator } from "@/components/ui/separator";
+
+// Datos de usuario simulados - En producción esto vendría de un contexto o API
+const userData = {
+  user: {
+    name: "Usuario Demo",
+    email: "usuario@ejemplo.com",
+    avatar: "/avatars/avatar.jpg", // Asegúrate de que existe o usa una imagen por defecto
+  },
+};
 
 export function MobileSidebar() {
   const pathname = usePathname();
@@ -44,147 +54,155 @@ export function MobileSidebar() {
     <Sheet open={openMobile} onOpenChange={setOpenMobile}>
       <SheetContent 
         side="left" 
-        className="p-0 w-[280px] max-w-[85vw]"
+        className="p-0 w-[280px] max-w-[85vw] overflow-y-auto"
         overlayClassName="bg-black/60"
       >
-        <SheetHeader className="p-4 border-b text-left">
-          <div className="flex justify-between items-center">
-            <Link 
-              href="/admin" 
-              className="flex items-center gap-2 font-bold"
-              onClick={() => setOpenMobile(false)}
-            >
-              <StoreIcon className="h-5 w-5" />
-              <SheetTitle className="text-left text-base">ML Manager</SheetTitle>
-            </Link>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="h-8 w-8"
-              onClick={() => setOpenMobile(false)}
-            >
-              <XIcon className="h-4 w-4" />
-            </Button>
-          </div>
-        </SheetHeader>
-
-        <div className="py-2 px-3">
-          <Button 
-            className="w-full justify-start bg-primary"
+        <SheetHeader className="p-4 border-b flex justify-between items-center">
+          <Link 
+            href="/admin" 
+            className="flex items-center gap-2 font-semibold"
             onClick={() => setOpenMobile(false)}
           >
-            <PlusCircleIcon className="h-4 w-4 mr-2" />
-            Quick Create
-          </Button>
-        </div>
+            <StoreIcon className="h-5 w-5" />
+            <span className="text-base">ML Manager</span>
+          </Link>
         
-        <div className="flex flex-col space-y-1 p-2">
-          <MobileNavLink 
-            href="/admin"
-            icon={<HomeIcon />}
-            label="Dashboard"
-            active={isActive("/admin")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <div className="pt-2 pb-1">
-            <p className="px-2 text-xs uppercase font-semibold text-muted-foreground">Mi Tienda</p>
+        </SheetHeader>
+
+        <div className="flex flex-col h-full">
+          {/* Sección principal */}
+          <div className="p-3">
+            <NavLink 
+              href="/admin"
+              icon={<HomeIcon className="h-5 w-5" />}
+              label="Dashboard"
+              active={isActive("/admin")}
+              onClick={() => setOpenMobile(false)}
+              
+            />
           </div>
           
-          <MobileNavLink 
-            href="/admin/stores"
-            icon={<ShoppingBagIcon />}
-            label="Tiendas"
-            active={isActive("/admin/stores")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <MobileNavLink 
-            href="/admin/products"
-            icon={<BoxIcon />}
-            label="Productos"
-            active={isActive("/admin/products")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <MobileNavLink 
-            href="/admin/tracking"
-            icon={<LineChartIcon />}
-            label="Seguimiento"
-            active={isActive("/admin/tracking")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <MobileNavLink 
-            href="/admin/bulk-import"
-            icon={<PackageIcon />}
-            label="Importación Masiva"
-            active={isActive("/admin/bulk-import")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <MobileNavLink 
-            href="/admin/analytics"
-            icon={<BarChartIcon />}
-            label="Estadísticas"
-            active={isActive("/admin/analytics")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <div className="pt-2 pb-1">
-            <p className="px-2 text-xs uppercase font-semibold text-muted-foreground">Equipo</p>
+          {/* Sección Mi Tienda */}
+          <div className="px-4 pt-4 pb-1">
+            <p className="text-xs  font-semibold text-muted-foreground">Mi Tienda</p>
+          </div>
+          <div className="p-3 space-y-1">
+            <NavLink 
+              href="/admin/stores"
+              icon={<ShoppingBagIcon className="h-5 w-5" />}
+              label="Tiendas"
+              active={isActive("/admin/stores")}
+              onClick={() => setOpenMobile(false)}
+            />
+            
+            <NavLink 
+              href="/admin/products"
+              icon={<BoxIcon className="h-5 w-5" />}
+              label="Productos"
+              active={isActive("/admin/products")}
+              onClick={() => setOpenMobile(false)}
+            />
+            
+            <NavLink 
+              href="/admin/tracking"
+              icon={<LineChartIcon className="h-5 w-5" />}
+              label="Seguimiento"
+              active={isActive("/admin/tracking")}
+              onClick={() => setOpenMobile(false)}
+            />
+            
+            <NavLink 
+              href="/admin/bulk-import"
+              icon={<PackageIcon className="h-5 w-5" />}
+              label="Importación Masiva"
+              active={isActive("/admin/bulk-import")}
+              onClick={() => setOpenMobile(false)}
+            />
+            
+            <NavLink 
+              href="/admin/analytics"
+              icon={<BarChartIcon className="h-5 w-5" />}
+              label="Estadísticas"
+              active={isActive("/admin/analytics")}
+              onClick={() => setOpenMobile(false)}
+            />
           </div>
           
-          <MobileNavLink 
-            href="/admin/team"
-            icon={<UsersIcon />}
-            label="Miembros"
-            active={isActive("/admin/team")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <MobileNavLink 
-            href="/admin/invitations"
-            icon={<MailIcon />}
-            label="Invitaciones"
-            active={isActive("/admin/invitations")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <div className="pt-2 pb-1">
-            <p className="px-2 text-xs uppercase font-semibold text-muted-foreground">Configuración</p>
+          {/* Sección Equipo */}
+          <div className="px-4 pt-4 pb-1">
+            <p className="text-xs  font-semibold text-muted-foreground">Equipo</p>
+          </div>
+          <div className="p-3 space-y-1">
+            <NavLink 
+              href="/admin/team"
+              icon={<UsersIcon className="h-5 w-5" />}
+              label="Miembros"
+              active={isActive("/admin/team")}
+              onClick={() => setOpenMobile(false)}
+            />
+            
+            <NavLink 
+              href="/admin/invitations"
+              icon={<MailIcon className="h-5 w-5" />}
+              label="Invitaciones"
+              active={isActive("/admin/invitations")}
+              onClick={() => setOpenMobile(false)}
+            />
           </div>
           
-          <MobileNavLink 
-            href="/admin/integrations"
-            icon={<SheetIcon />}
-            label="Integraciones"
-            active={isActive("/admin/integrations")}
-            onClick={() => setOpenMobile(false)}
-          />
+          {/* Sección Configuración */}
+          <div className="px-4 pt-4 pb-1">
+            <p className="text-xs  font-semibold text-muted-foreground">Configuración</p>
+          </div>
+          <div className="p-3 space-y-1">
+            <NavLink 
+              href="/admin/integrations"
+              icon={<SheetIcon className="h-5 w-5" />}
+              label="Integraciones"
+              active={isActive("/admin/integrations")}
+              onClick={() => setOpenMobile(false)}
+            />
+            
+            <NavLink 
+              href="/admin/settings"
+              icon={<SettingsIcon className="h-5 w-5" />}
+              label="Configuración"
+              active={isActive("/admin/settings")}
+              onClick={() => setOpenMobile(false)}
+            />
+          </div>
+
+          {/* Búsqueda */}
+          <div className="p-3 mt-4">
+            <NavLink 
+              href="/admin/search"
+              icon={<SearchIcon className="h-5 w-5" />}
+              label="Buscar"
+              active={isActive("/admin/search")}
+              onClick={() => setOpenMobile(false)}
+            />
+          </div>
           
-          <MobileNavLink 
-            href="/admin/settings"
-            icon={<SettingsIcon />}
-            label="Configuración"
-            active={isActive("/admin/settings")}
-            onClick={() => setOpenMobile(false)}
-          />
-          
-          <MobileNavLink 
-            href="/admin/search"
-            icon={<SearchIcon />}
-            label="Buscar"
-            active={isActive("/admin/search")}
-            onClick={() => setOpenMobile(false)}
-          />
+          {/* Footer/User */}
+          <div className="mt-auto p-4 border-t">
+            <div className="flex items-center gap-3">
+              <Avatar className="h-9 w-9 rounded-lg">
+                <AvatarImage src={userData.user.avatar} alt={userData.user.name} />
+                <AvatarFallback className="rounded-lg">UD</AvatarFallback>
+              </Avatar>
+              <div className="flex flex-col">
+                <span className="font-medium text-sm">{userData.user.name}</span>
+                <span className="text-xs text-muted-foreground">{userData.user.email}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </SheetContent>
     </Sheet>
   );
 }
 
-interface MobileNavLinkProps {
+interface NavLinkProps {
   href: string;
   icon: React.ReactNode;
   label: string;
@@ -192,11 +210,12 @@ interface MobileNavLinkProps {
   onClick?: () => void;
 }
 
-function MobileNavLink({ href, icon, label, active, onClick }: MobileNavLinkProps) {
+function NavLink({ href, icon, label, active, onClick }: NavLinkProps) {
   return (
     <Link 
       href={href}
-      className={`flex items-center gap-3 px-2 py-2 text-sm rounded-md transition-colors ${
+      className={`flex items-center gap-3 px-2 py-2 text-gray-700
+        text-sm rounded-md transition-colors ${
         active 
           ? "bg-primary/10 text-primary font-medium" 
           : "text-foreground hover:bg-muted"

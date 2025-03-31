@@ -93,7 +93,7 @@ export default function AdminStoresPage() {
   };
 
   return (
-    <div className="px-4 lg:px-6">
+    <div className="px-4 lg:px-6 w-full">
       <h1 className="text-2xl font-bold mb-6">Gestión de Tiendas</h1>
       
       {error && (

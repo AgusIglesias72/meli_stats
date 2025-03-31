@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 
 // Mapeo de códigos de error a mensajes amigables
 const errorMessages: Record<string, string> = {
@@ -93,7 +92,6 @@ export default function AuthErrorPage() {
           <AuthErrorContent />
         </Suspense>
       </main>
-      <Footer />
     </div>
   );
 }

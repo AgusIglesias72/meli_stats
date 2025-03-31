@@ -19,7 +19,7 @@ export default function AdminLayout({
 
   return (
     <SidebarProvider>
-      <div className="flex min-h-screen bg-background">
+      <div className="flex min-h-screen bg-background w-full">
         {/* Sidebar para desktop */}
         {!isMobile && (
           <AdminSidebar
@@ -34,8 +34,8 @@ export default function AdminLayout({
         <SidebarInset className="w-full overflow-hidden">
           <SiteHeader />
           <div className="flex flex-1 flex-col">
-            <div className="@container/main flex flex-1 flex-col gap-2">
-              <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+            <div className="@container/main flex flex-1 flex-col gap-2 w-full">
+              <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6 w-full">
                 {children}
               </div>
             </div>
