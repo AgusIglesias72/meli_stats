@@ -3,7 +3,6 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import ProductsTab from '@/components/dashboard/ProductsTab';
 import TrackedItemsTab from '@/components/dashboard/TrackedItemsTab';
@@ -433,7 +432,6 @@ export default function Dashboard() {
           </Tabs>
         </div>
       </main>
-      <Footer />
     </div>
   );
 }

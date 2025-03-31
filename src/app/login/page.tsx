@@ -2,7 +2,6 @@ import React from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 
 export default function LoginPage() {
   // Esta URL debe construirse con tus credenciales de aplicación de Mercado Libre
@@ -42,7 +41,6 @@ export default function LoginPage() {
           </div>
         </div>
       </main>
-      <Footer />
     </div>
   );
 }
