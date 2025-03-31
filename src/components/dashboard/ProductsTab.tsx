@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Download, Loader2, RefreshCw } from 'lucide-react';
+import { Download, Loader2, RefreshCw, LayoutGrid, List } from 'lucide-react';
 import ProductCard from './ProductCard';
+import ProductsTableView from './ProductsTableView';
 import FilterSortControls, { SortField, SortDirection, StatusFilter } from './FilterSortControls';
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 interface Category {
   id: string;
@@ -68,6 +70,9 @@ export default function ProductsTab({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  
+  // Estado para el tipo de vista (grid o table)
+  const [viewType, setViewType] = useState<'grid' | 'table'>('grid');
 
   // Extraer categorías únicas de los items
   const categories = useMemo(() => {
@@ -194,18 +199,31 @@ export default function ProductsTab({
       )}
 
       {/* Controles de filtrado y ordenamiento */}
-      <FilterSortControls
-        sortField={sortField}
-        sortDirection={sortDirection}
-        statusFilter={statusFilter}
-        categoryFilter={categoryFilter}
-        searchQuery={searchQuery}
-        onSortChange={handleSortChange}
-        onStatusFilterChange={setStatusFilter}
-        onCategoryFilterChange={setCategoryFilter}
-        onSearchQueryChange={setSearchQuery}
-        categories={categories}
-      />
+      <div className="flex flex-col space-y-4 md:flex-row md:justify-between md:items-center md:space-y-0">
+        <FilterSortControls
+          sortField={sortField}
+          sortDirection={sortDirection}
+          statusFilter={statusFilter}
+          categoryFilter={categoryFilter}
+          searchQuery={searchQuery}
+          onSortChange={handleSortChange}
+          onStatusFilterChange={setStatusFilter}
+          onCategoryFilterChange={setCategoryFilter}
+          onSearchQueryChange={setSearchQuery}
+          categories={categories}
+        />
+        
+        <div className="flex space-x-2">
+          <ToggleGroup type="single" value={viewType} onValueChange={(value) => value && setViewType(value as 'grid' | 'table')}>
+            <ToggleGroupItem value="grid" aria-label="Ver en cuadrícula">
+              <LayoutGrid className="h-4 w-4" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="table" aria-label="Ver en tabla">
+              <List className="h-4 w-4" />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      </div>
       
       {/* Indicación de filtros activos */}
       {(statusFilter !== 'all' || categoryFilter || searchQuery || sortField) && (
@@ -232,28 +250,36 @@ export default function ProductsTab({
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredAndSortedItems.map((item) => (
-              <ProductCard
-                key={item.id}
-                id={item.id}
-                item_id={item.item_id}
-                title={item.title}
-                price={item.price}
-                regular_amount={item.regular_amount}
-                amount={item.amount}
-                currency_id={item.currency_id}
-                thumbnail={item.thumbnail}
-                permalink={item.permalink}
-                status={item.status}
-                seller_nickname={item.seller_nickname} // Pasamos el seller_nickname
-                seller_id={item.seller_id} // Pasamos el seller_id
-                last_updated={item.last_updated}
-                formatCurrency={formatCurrency}
-                formatDate={formatDate}
-              />
-            ))}
-          </div>
+          {viewType === 'grid' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredAndSortedItems.map((item) => (
+                <ProductCard
+                  key={item.id}
+                  id={item.id}
+                  item_id={item.item_id}
+                  title={item.title}
+                  price={item.price}
+                  regular_amount={item.regular_amount}
+                  amount={item.amount}
+                  currency_id={item.currency_id}
+                  thumbnail={item.thumbnail}
+                  permalink={item.permalink}
+                  status={item.status}
+                  seller_nickname={item.seller_nickname} // Pasamos el seller_nickname
+                  seller_id={item.seller_id} // Pasamos el seller_id
+                  last_updated={item.last_updated}
+                  formatCurrency={formatCurrency}
+                  formatDate={formatDate}
+                />
+              ))}
+            </div>
+          ) : (
+            <ProductsTableView
+              items={filteredAndSortedItems}
+              formatCurrency={formatCurrency}
+              formatDate={formatDate}
+            />
+          )}
 
           {/* Paginación */}
           {pagination.totalPages > 1 && (

@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw, LayoutGrid, List } from 'lucide-react';
 import ProductCard from './ProductCard';
+import TrackedItemsTableView from './TrackedItemsTableView';
 import FilterSortControls, { SortField, SortDirection, StatusFilter } from './FilterSortControls';
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 interface Category {
   id: string;
@@ -76,6 +78,9 @@ export default function TrackedItemsTab({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  
+  // Estado para el tipo de vista (grid o table)
+  const [viewType, setViewType] = useState<'grid' | 'table'>('grid');
 
   // Extraer categorías únicas de los items
   const categories = useMemo(() => {
@@ -194,18 +199,31 @@ export default function TrackedItemsTab({
       )}
 
       {/* Controles de filtrado y ordenamiento */}
-      <FilterSortControls
-        sortField={sortField}
-        sortDirection={sortDirection}
-        statusFilter={statusFilter}
-        categoryFilter={categoryFilter}
-        searchQuery={searchQuery}
-        onSortChange={handleSortChange}
-        onStatusFilterChange={setStatusFilter}
-        onCategoryFilterChange={setCategoryFilter}
-        onSearchQueryChange={setSearchQuery}
-        categories={categories}
-      />
+      <div className="flex flex-col space-y-4 md:flex-row md:justify-between md:items-center md:space-y-0">
+        <FilterSortControls
+          sortField={sortField}
+          sortDirection={sortDirection}
+          statusFilter={statusFilter}
+          categoryFilter={categoryFilter}
+          searchQuery={searchQuery}
+          onSortChange={handleSortChange}
+          onStatusFilterChange={setStatusFilter}
+          onCategoryFilterChange={setCategoryFilter}
+          onSearchQueryChange={setSearchQuery}
+          categories={categories}
+        />
+        
+        <div className="flex space-x-2">
+          <ToggleGroup type="single" value={viewType} onValueChange={(value) => value && setViewType(value as 'grid' | 'table')}>
+            <ToggleGroupItem value="grid" aria-label="Ver en cuadrícula">
+              <LayoutGrid className="h-4 w-4" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="table" aria-label="Ver en tabla">
+              <List className="h-4 w-4" />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      </div>
       
       {/* Indicación de filtros activos para debug */}
       {(statusFilter !== 'all' || categoryFilter || searchQuery || sortField) && (
@@ -232,31 +250,40 @@ export default function TrackedItemsTab({
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredAndSortedItems.map((item) => (
-              <ProductCard
-                key={item.id}
-                id={item.id}
-                item_id={item.item_id}
-                title={item.data?.title || 'Datos no disponibles'}
-                price={item.data?.price || 0}
-                regular_amount={item.data?.regular_amount || null}
-                amount={item.data?.amount || null}
-                currency_id={item.data?.currency_id || 'ARS'}
-                thumbnail={item.data?.thumbnail || ''}
-                permalink={item.data?.permalink || '#'}
-                status={item.data?.status || 'unknown'}
-                last_updated={item.data?.last_updated || item.created_at}
-                notes={item.notes}
-                brand={item.data?.brand}
-                seller_nickname={item.data?.seller_nickname || item.seller_nickname} // Usar seller_nickname de data o config
-                seller_id={item.data?.seller_id || item.seller_id} // Usar seller_id de data o config
-                onRemove={removeTrackedItem}
-                formatCurrency={formatCurrency}
-                formatDate={formatDate}
-              />
-            ))}
-          </div>
+          {viewType === 'grid' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredAndSortedItems.map((item) => (
+                <ProductCard
+                  key={item.id}
+                  id={item.id}
+                  item_id={item.item_id}
+                  title={item.data?.title || 'Datos no disponibles'}
+                  price={item.data?.price || 0}
+                  regular_amount={item.data?.regular_amount || null}
+                  amount={item.data?.amount || null}
+                  currency_id={item.data?.currency_id || 'ARS'}
+                  thumbnail={item.data?.thumbnail || ''}
+                  permalink={item.data?.permalink || '#'}
+                  status={item.data?.status || 'unknown'}
+                  last_updated={item.data?.last_updated || item.created_at}
+                  notes={item.notes}
+                  brand={item.data?.brand}
+                  seller_nickname={item.data?.seller_nickname || item.seller_nickname} // Usar seller_nickname de data o config
+                  seller_id={item.data?.seller_id || item.seller_id} // Usar seller_id de data o config
+                  onRemove={removeTrackedItem}
+                  formatCurrency={formatCurrency}
+                  formatDate={formatDate}
+                />
+              ))}
+            </div>
+          ) : (
+            <TrackedItemsTableView
+              trackedItems={filteredAndSortedItems}
+              formatCurrency={formatCurrency}
+              formatDate={formatDate}
+              removeTrackedItem={removeTrackedItem}
+            />
+          )}
 
           {/* Paginación */}
           {trackedPagination.totalPages > 1 && (

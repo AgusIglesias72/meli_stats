@@ -87,21 +87,21 @@ export function NavUser({
             <DropdownMenuGroup>
               <DropdownMenuItem className="text-gray-700">
                 <UserCircleIcon />
-                Account
+                Cuenta
               </DropdownMenuItem>
               <DropdownMenuItem className="text-gray-700">
                 <CreditCardIcon />
-                Billing
+                Facturación
               </DropdownMenuItem>
               <DropdownMenuItem className="text-gray-700 hover:bg-gray-200 transition-colors duration-200">
                 <BellIcon />
-                Notifications
+                Alertas
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-gray-700">
               <LogOutIcon  />
-              Log out
+              Cerrar Sesión
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

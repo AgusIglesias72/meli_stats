@@ -38,7 +38,7 @@ export default function AdminProductsPage() {
   const [autoImporting, setAutoImporting] = useState(false);
   const [pagination, setPagination] = useState<PaginationInfo>({
     page: 1,
-    limit: 20,
+    limit: 1000,
     totalItems: 0,
     totalPages: 0
   });

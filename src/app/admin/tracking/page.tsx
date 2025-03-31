@@ -46,7 +46,7 @@ export default function AdminTrackingPage() {
   const [updatingTrackedItems, setUpdatingTrackedItems] = useState(false);
   const [trackedPagination, setTrackedPagination] = useState<PaginationInfo>({
     page: 1,
-    limit: 20,
+    limit: 1000,
     totalItems: 0,
     totalPages: 0
   });
