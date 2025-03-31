@@ -16,6 +16,8 @@ export function middleware(request: NextRequest) {
   const authUserId = request.cookies.get('auth_user_id')?.value;
   const isAuthenticated = !!authUserId;
   const selectedStoreId = request.cookies.get('selected_store_id')?.value;
+
+  return
   
   // Si la ruta requiere autenticación y no está autenticado, redirigir al login
   if (protectedRoutes.some(route => currentPath.startsWith(route)) && !isAuthenticated) {
