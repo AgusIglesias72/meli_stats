@@ -31,6 +31,8 @@ export async function GET(request: NextRequest) {
       .eq('store_id', selectedStoreId)
       .single();
 
+    console.log('storeAccess', storeAccess);
+
     if (accessError || !storeAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
