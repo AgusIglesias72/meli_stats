@@ -128,147 +128,104 @@ export async function POST(request: NextRequest) {
        
        // Crear un Set para búsqueda eficiente
        const existingItemIds = new Set(existingItems?.map(item => item.item_id) || []);
-       
-       // Filtrar solo los IDs que no existen en la base de datos
-       const newProductIds = allProductIds.filter(id => !existingItemIds.has(id));
-       
-       console.log(`Total de productos encontrados: ${allProductIds.length}`);
-       console.log(`Productos a importar: ${newProductIds.length}`);
-       
-       // Variables para seguimiento del proceso
-       let imported = 0;
-       let failed = 0;
-       const errors: ImportError[] = [];
-       
-       // Procesar en lotes de 20 IDs
-       for (let i = 0; i < newProductIds.length; i += 20) {
-         const batch = newProductIds.slice(i, i + 20);
          
-         try {
-           // Consultar los items en un lote
-           const batchItems = await fetchItemsBatch(accessToken, batch);
-           
-           // Preparar los datos para la inserción
-           const itemsToInsert = batchItems.map(item => ({
-             item_id: item.id,
-             user_id: userId,
-             site_id: item.site_id,
-             title: item.title,
-             seller_id: item.seller_id,
-             category_id: item.category_id,
-             official_store_id: item.official_store_id,
-             price: item.price,
-             base_price: item.base_price,
-             currency_id: item.currency_id,
-             available_quantity: item.available_quantity,
-             status: item.status,
-             permalink: item.permalink,
-             thumbnail: item.thumbnail
-           }));
-           
-           // Insertar en la base de datos
-           const { error: insertError, count } = await supabase
-             .from('items')
-             .insert(itemsToInsert)
-             .select('count');
-           
-           if (insertError) {
-             console.error('Error al insertar items:', insertError);
-             
-             // Registrar los errores individualmente para cada item del lote
-             batch.forEach(itemId => {
-               errors.push({
-                 item_id: itemId,
-                 error_message: `Error al insertar en la base de datos: ${insertError.message}`,
-                 created_at: new Date()
-               });
-             });
-             
-             failed += batch.length;
-           } else {
-             imported += itemsToInsert.length;
-             console.log(`Lote procesado: ${i} - ${i + batch.length}. Importados: ${itemsToInsert.length}`);
-           }
-         } catch (error: any) {
-           console.error(`Error al procesar lote ${i} - ${i + batch.length}:`, error);
-           
-           // Si hay un error general en el lote, verificar individualmente cada item
-           for (const itemId of batch) {
-             try {
-               const item = await fetchSingleItem(accessToken, itemId);
-               
-               // Si se obtiene correctamente, insertar
-               const { error: singleInsertError } = await supabase
-                 .from('items')
-                 .insert({
-                   item_id: item.id,
-                   user_id: userId,
-                   site_id: item.site_id,
-                   title: item.title,
-                   seller_id: item.seller_id,
-                   category_id: item.category_id,
-                   official_store_id: item.official_store_id,
-                   price: item.price,
-                   base_price: item.base_price,
-                   currency_id: item.currency_id,
-                   available_quantity: item.available_quantity,
-                   status: item.status,
-                   permalink: item.permalink,
-                   thumbnail: item.thumbnail
-                 });
-               
-               if (singleInsertError) {
-                 errors.push({
-                   item_id: itemId,
-                   error_message: `Error al insertar individualmente: ${singleInsertError.message}`,
-                   created_at: new Date()
-                 });
-                 failed++;
-               } else {
-                 imported++;
-               }
-             } catch (singleError: any) {
-               errors.push({
-                 item_id: itemId,
-                 error_message: singleError.message || 'Error desconocido al obtener item individualmente',
-                 created_at: new Date()
-               });
-               failed++;
-             }
-           }
-         }
-       }
-       
-       // Guardar errores en la base de datos para referencia futura
-       if (errors.length > 0) {
-         // Crear tabla de errores si no existe
-         await supabase.rpc('create_import_errors_table_if_not_exists');
-         
-         // Insertar errores
-         await supabase
-           .from('import_errors')
-           .insert(errors.map(err => ({
-             item_id: err.item_id,
-             error_message: err.error_message,
-             user_id: userId
-           })));
-       }
-       
-       return NextResponse.json({
-         imported,
-         failed,
-         total: newProductIds.length,
-         error_count: errors.length
-       });
-       
-     } catch (error: any) {
-       console.error('Error en auto-importación:', error);
-       return NextResponse.json(
-         { error: error.message || 'Error al importar productos' },
-         { status: 500 }
-       );
-     }
-   }
+    // Filtrar para procesar solo los nuevos
+    const newItemIds = allProductIds.filter((id: string) => !existingItemIds.has(id));
+    
+    if (newItemIds.length === 0) {
+      return Response.json({
+        imported: 0,
+        failed: 0,
+        total: 0,
+        message: 'No hay nuevos productos para importar'
+      });
+    }
+    
+    // Variables para seguimiento
+    const itemsToInsert = [];
+    const failedItems = [];
+    
+    // Procesar los productos en lotes de 20
+    const batchSize = 20;
+    for (let i = 0; i < newItemIds.length; i += batchSize) {
+      const batch = newItemIds.slice(i, i + batchSize);
+      
+      // Obtener los precios de venta para este lote
+      const priceDataMap = await getProductsSalePrices(batch, accessToken);
+      
+      // Obtener información detallada de los productos
+      const itemInfoResponse = await fetch(`https://api.mercadolibre.com/items?ids=${batch.join(',')}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
+      });
+      
+      if (!itemInfoResponse.ok) {
+        // Si falla todo el lote, añadir todos los IDs a fallidos
+        failedItems.push(...batch);
+        continue;
+      }
+      
+      const itemsData = await itemInfoResponse.json();
+      
+      // Procesar cada producto
+      for (const itemData of itemsData) {
+        if (itemData.code !== 200 || !itemData.body) {
+          failedItems.push(itemData.id || 'unknown');
+          continue;
+        }
+        
+        const item = itemData.body;
+        const priceData = priceDataMap[item.id];
+        
+        // Preparar el objeto para insertar, incluyendo datos de precios
+        itemsToInsert.push({
+          item_id: item.id,
+          user_id: authUserId,
+          store_id: selectedStoreId,
+          site_id: item.site_id,
+          title: item.title,
+          seller_id: item.seller_id,
+          category_id: item.category_id,
+          official_store_id: item.official_store_id,
+          price: item.price,
+          base_price: item.base_price,
+          regular_amount: priceData?.regular_amount || null,
+          amount: priceData?.amount || null,
+          currency_id: item.currency_id,
+          available_quantity: item.available_quantity,
+          permalink: item.permalink,
+          thumbnail: item.thumbnail,
+          status: item.status,
+          last_updated: new Date().toISOString()
+        });
+      }
+    }
+    
+    // Insertar en la base de datos
+    const { error: insertError, data: insertedItems } = await supabase
+      .from('items')
+      .insert(itemsToInsert)
+      .select();
+    
+    // Obtener el número de elementos insertados
+    const count = insertedItems ? insertedItems.length : 0;
+    
+    if (insertError) {
+      console.error('Error al insertar items:', insertError);
+      return Response.json({ error: insertError.message }, { status: 500 });
+    }
+    
+    return Response.json({
+      imported: count,
+      failed: failedItems.length,
+      total: newItemIds.length
+    });
+  } catch (error) {
+    console.error('Error en auto-import:', error);
+    return Response.json({ error: (error as Error).message }, { status: 500 });
+  }
+}
    
    /**
     * Obtiene todos los IDs de productos disponibles usando paginación con scroll_id.
@@ -355,7 +312,9 @@ export async function POST(request: NextRequest) {
      }
      
      const data = await response.json();
-     
+
+    
+    
      // Filtrar solo los resultados exitosos y extraer los cuerpos
      return data
        .filter((result: any) => result.code === 200)
@@ -381,3 +340,43 @@ export async function POST(request: NextRequest) {
      
      return response.json();
    }
+
+   async function getProductsSalePrices(itemIds: string[], accessToken: string) {
+    const priceDataMap: { [key: string]: any } = {};
+    
+    // Procesar en lotes más pequeños para evitar sobrecargar la API
+    const batchSize = 20;
+    for (let i = 0; i < itemIds.length; i += batchSize) {
+      const batch = itemIds.slice(i, i + batchSize);
+      
+      // Realizar consultas en paralelo para mayor eficiencia
+      const pricePromises = batch.map(async (itemId: string) => {
+        try {
+          const response = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`
+            }
+          });
+          
+          if (response.ok) {
+            const priceData = await response.json();
+            return { itemId, priceData };
+          }
+          return { itemId, priceData: null };
+        } catch (error) {
+          console.error(`Error al obtener precio de venta para el ítem ${itemId}:`, error);
+          return { itemId, priceData: null };
+        }
+      });
+      
+      const priceResults = await Promise.all(pricePromises);
+      
+      // Añadir resultados al mapa
+      for (const result of priceResults) {
+        priceDataMap[result.itemId] = result.priceData;
+      }
+    }
+    
+    return priceDataMap;
+  }
+  
