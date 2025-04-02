@@ -21,15 +21,12 @@ export const metadata: Metadata = {
       name: "Green Deco Team",
     },
   ],
-  colorScheme: "light dark",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#18d096" },
-    { media: "(prefers-color-scheme: dark)", color: "#111213" },
-  ],
+  
 };
 export const viewport = {
   width: "device-width",
   initialScale: 1,
+  colorScheme: "light dark",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#18d096" },
     { media: "(prefers-color-scheme: dark)", color: "#111213" },

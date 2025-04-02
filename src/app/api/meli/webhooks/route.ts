@@ -31,26 +31,38 @@ export async function POST(request: NextRequest) {
       );
     }
     
+        // Si el topic no contiene "items", simplemente devolvemos éxito
+    // Esto incluye topics como "orders", "shipments", etc.
+    if (!notification.topic.includes('items')) {
+      console.log(`Notificación ignorada para topic: ${notification.topic}`);
+      return NextResponse.json({ 
+        success: true, 
+        message: 'Notificación recibida pero ignorada (topic no relacionado con items)' 
+      });
+    }
+    
+    // A partir de aquí sabemos que es un topic relacionado con items (items, items_prices, etc.)
     // Extraer el ID del producto del resource (formato: '/items/MLA1234567')
     const itemIdMatch = notification.resource.match(/\/items\/([A-Za-z0-9]+)/);
     if (!itemIdMatch) {
+      console.error(`Formato de resource inválido para topic de items: ${notification.resource}`);
       return NextResponse.json(
-        { error: 'Formato de resource inválido' },
+        { error: 'Formato de resource inválido para items' },
         { status: 400 }
       );
     }
     
     const itemId = itemIdMatch[1];
-    console.log(`Producto ID: ${itemId}, Topic: ${notification.topic}, User ID: ${notification.user_id}`);
+    console.log(`Procesando: Item ID: ${itemId}, Topic: ${notification.topic}, User ID: ${notification.user_id}`);
+     // Procesar la actualización del item
+     await processItemUpdate(notification.user_id.toString(), itemId);
     
-    // Verificar si es una notificación de cambio de precio
-    if (notification.topic === 'items_prices' || notification.topic === 'items') {
-      await processItemUpdate(notification.user_id.toString(), itemId);
-      return NextResponse.json({ success: true, message: 'Notificación procesada correctamente' });
-    }
-    
-    // Si no es un tipo de notificación que nos interesa, solo respondemos OK
-    return NextResponse.json({ success: true, message: 'Notificación recibida' });
+     return NextResponse.json({ 
+       success: true, 
+       message: 'Notificación de item procesada correctamente',
+       itemId: itemId,
+       topic: notification.topic
+     });
     
   } catch (error) {
     console.error('Error procesando webhook:', error);
