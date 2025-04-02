@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
+import { syncItemToSheet } from '@/lib/syncItemToSheet';
 
 export const runtime = 'edge';
 
@@ -118,6 +119,9 @@ async function processItemUpdate(user_id: string, itemId: string) {
 
     // Actualizar cualquier tracked_item relacionado
     // await updateTrackedItem(itemId, itemData);
+
+    // Actualizar la hoja de cálculo de Google Sheets
+    await syncItemToSheet(itemData); 
 
     console.log(`Item ${itemId} actualizado correctamente`);
   } catch (error) {
