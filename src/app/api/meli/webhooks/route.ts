@@ -21,18 +21,15 @@ export async function POST(request: NextRequest) {
   try {
     // Extraer la notificación del cuerpo de la solicitud
     const notification: MercadoLibreNotification = await request.json();
-    
-    // Registrar la notificación recibida para depuración
-    console.log('Received notification:', notification);
-    
+
     // Validar que todos los campos necesarios estén presentes
     if (!notification.topic || !notification.resource || !notification.user_id) {
       return NextResponse.json(
         { error: 'Notificación incompleta' },
         { status: 400 }
-      );
+    );
     }
-    
+   
     // Si el topic no contiene "items", simplemente devolvemos éxito
     // Esto incluye topics como "orders", "shipments", etc.
     if (!notification.topic.includes('items')) {
@@ -45,6 +42,7 @@ export async function POST(request: NextRequest) {
     
     // A partir de aquí sabemos que es un topic relacionado con items (items, items_prices, etc.)
     // Extraer el ID del producto del resource (formato: '/items/MLA1234567')
+    
     const itemIdMatch = notification.resource.match(/\/items\/([A-Za-z0-9]+)/);
     if (!itemIdMatch) {
       console.error(`Formato de resource inválido para topic de items: ${notification.resource}`);
@@ -55,15 +53,22 @@ export async function POST(request: NextRequest) {
     }
     
     const itemId = itemIdMatch[1];
-     // Procesar la actualización del item
-     await processItemUpdate(notification.user_id.toString(), itemId);
+
+    // Iniciar el procesamiento en segundo plano sin esperar
+    Promise.resolve().then(() => {
+      processItemUpdate(notification.user_id.toString(), itemId)
+        .catch(error => {
+          console.error(`Error procesando item ${itemId} en segundo plano:`, error);
+        });
+    });
     
-     return NextResponse.json({ 
-       success: true, 
-       message: 'Notificación de item procesada correctamente',
-       itemId: itemId,
-       topic: notification.topic
-     });
+    // Responder inmediatamente con éxito
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Notificación recibida y procesamiento iniciado',
+      itemId: itemId,
+      topic: notification.topic
+    });
     
   } catch (error) {
     console.error('Error procesando webhook:', error);
@@ -81,6 +86,8 @@ export async function POST(request: NextRequest) {
  */
 async function processItemUpdate(user_id: string, itemId: string) {
   try {
+    console.log(`Iniciando procesamiento asíncrono para item ${itemId} del usuario ${user_id}`);
+
     // Inicializar cliente de Supabase
     const supabase = createServerSupabaseClient();
     
