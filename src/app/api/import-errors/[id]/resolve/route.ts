@@ -6,12 +6,10 @@ import { createServerSupabaseClient } from '@/lib/supabase';
 /**
  * Maneja la solicitud POST para marcar un error como resuelto
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: NextRequest) {
   try {
-    const errorId = params.id;
+    const { searchParams } = new URL(request.url);
+    const errorId = searchParams.get('id');
     
     if (!errorId) {
       return NextResponse.json(
