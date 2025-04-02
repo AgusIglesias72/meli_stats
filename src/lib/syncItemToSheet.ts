@@ -1,6 +1,6 @@
 import { getSheetsClient } from './googleSheetsClient';
 
-const SPREADSHEET_ID = 'TU_SPREADSHEET_ID';
+const SPREADSHEET_ID = '1uESNvCVtMssb56eop9FhisZPNLMPssUDdhonmXI_2b0';
 const SHEET_NAME = 'Items';
 
 export async function syncItemToSheet(itemData: any) {
