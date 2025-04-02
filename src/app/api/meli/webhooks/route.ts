@@ -95,7 +95,7 @@ async function processItemUpdate(user_id: string, itemId: string) {
     await updateItemInDatabase(itemId, itemData, store.id);
     
     // Actualizar cualquier tracked_item relacionado
-    await updateTrackedItem(itemId, itemData);
+    // await updateTrackedItem(itemId, itemData);
     
     console.log(`Item ${itemId} actualizado correctamente`);
     
