@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
-// export const runtime = 'edge'
+export const runtime = 'edge'
 
 // Interfaz para las notificaciones de Mercado Libre
 interface MercadoLibreNotification {
@@ -21,15 +21,18 @@ export async function POST(request: NextRequest) {
   try {
     // Extraer la notificación del cuerpo de la solicitud
     const notification: MercadoLibreNotification = await request.json();
-
+    
+    // Registrar la notificación recibida para depuración
+    console.log('Received notification:', notification);
+    
     // Validar que todos los campos necesarios estén presentes
     if (!notification.topic || !notification.resource || !notification.user_id) {
       return NextResponse.json(
         { error: 'Notificación incompleta' },
         { status: 400 }
-    );
+      );
     }
-   
+    
     // Si el topic no contiene "items", simplemente devolvemos éxito
     // Esto incluye topics como "orders", "shipments", etc.
     if (!notification.topic.includes('items')) {
@@ -42,7 +45,6 @@ export async function POST(request: NextRequest) {
     
     // A partir de aquí sabemos que es un topic relacionado con items (items, items_prices, etc.)
     // Extraer el ID del producto del resource (formato: '/items/MLA1234567')
-    
     const itemIdMatch = notification.resource.match(/\/items\/([A-Za-z0-9]+)/);
     if (!itemIdMatch) {
       console.error(`Formato de resource inválido para topic de items: ${notification.resource}`);
@@ -53,22 +55,15 @@ export async function POST(request: NextRequest) {
     }
     
     const itemId = itemIdMatch[1];
-
-    // Iniciar el procesamiento en segundo plano sin esperar
-    Promise.resolve().then(() => {
-      processItemUpdate(notification.user_id.toString(), itemId)
-        .catch(error => {
-          console.error(`Error procesando item ${itemId} en segundo plano:`, error);
-        });
-    });
+     // Procesar la actualización del item
+     await processItemUpdate(notification.user_id.toString(), itemId);
     
-    // Responder inmediatamente con éxito
-    return NextResponse.json({ 
-      success: true, 
-      message: 'Notificación recibida y procesamiento iniciado',
-      itemId: itemId,
-      topic: notification.topic
-    });
+     return NextResponse.json({ 
+       success: true, 
+       message: 'Notificación de item procesada correctamente',
+       itemId: itemId,
+       topic: notification.topic
+     });
     
   } catch (error) {
     console.error('Error procesando webhook:', error);
@@ -86,8 +81,6 @@ export async function POST(request: NextRequest) {
  */
 async function processItemUpdate(user_id: string, itemId: string) {
   try {
-    console.log(`Iniciando procesamiento asíncrono para item ${itemId} del usuario ${user_id}`);
-
     // Inicializar cliente de Supabase
     const supabase = createServerSupabaseClient();
     
@@ -130,19 +123,19 @@ async function processItemUpdate(user_id: string, itemId: string) {
  */
 async function fetchItemFromMeli(itemId: string, accessToken: string) {
   try {
-    // Hacer petición a la API de Mercado Libre
-    const response = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-
-    // Also get from the same item the sale prices
-    const responseSalePrices = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
+    // Hacer petición a la API de Mercado Libre para obtener datos del item y los precios de venta simultáneamente
+    const [response, responseSalePrices] = await Promise.all([
+      fetch(`https://api.mercadolibre.com/items/${itemId}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
+      }),
+      fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
+      })
+    ]);
     
     if (!response.ok) {
       throw new Error(`Error al obtener datos del item: ${response.status} ${response.statusText}`);
@@ -230,102 +223,5 @@ async function updateItemInDatabase(itemId: string, itemData: any, storeId: stri
   } catch (error) {
     console.error(`Error en la actualización del item ${itemId} en la base de datos:`, error);
     throw error;
-  }
-}
-
-/**
- * Actualiza cualquier tracked_item relacionado con el item actualizado
- */
-async function updateTrackedItem(itemId: string, itemData: any) {
-  try {
-    const supabase = createServerSupabaseClient();
-    
-    // Buscar todos los tracked_items para este item_id
-    const { data: trackedItems, error: findError } = await supabase
-      .from('tracked_items')
-      .select('id')
-      .eq('item_id', itemId);
-    
-    if (findError) {
-      console.error(`Error buscando tracked_items para ${itemId}:`, findError);
-      return;
-    }
-    
-    if (!trackedItems || trackedItems.length === 0) {
-      // No hay tracked_items para este item
-      return;
-    }
-    
-    // Actualizar todos los tracked_items encontrados
-    for (const trackedItem of trackedItems) {
-      // Almacenamos la versión actual en el historial si los precios han cambiado
-      await storeTrackedItemHistory(trackedItem.id, itemData);
-      
-      // Actualizar el tracked_item con los datos nuevos
-      const { error: updateError } = await supabase
-        .from('tracked_items')
-        .update({
-          data: itemData,
-          last_updated: new Date().toISOString()
-        })
-        .eq('id', trackedItem.id);
-      
-      if (updateError) {
-        console.error(`Error actualizando tracked_item ${trackedItem.id}:`, updateError);
-      }
-    }
-    
-  } catch (error) {
-    console.error(`Error actualizando tracked_items para ${itemId}:`, error);
-    throw error;
-  }
-}
-
-/**
- * Almacena una versión en el historial si ha habido cambios en los precios
- */
-async function storeTrackedItemHistory(trackedItemId: string, newData: any) {
-  try {
-    const supabase = createServerSupabaseClient();
-    
-    // Obtener los datos actuales del tracked_item
-    const { data: currentTrackedItem, error: getError } = await supabase
-      .from('tracked_items')
-      .select('data')
-      .eq('id', trackedItemId)
-      .single();
-    
-    if (getError || !currentTrackedItem) {
-      console.error(`No se pudo obtener el tracked_item ${trackedItemId}:`, getError);
-      return;
-    }
-    
-    // Comparar si hubo cambios en el precio o en el precio regular
-    const currentData = currentTrackedItem.data;
-    
-    // Si no hay datos previos o hubo cambios en los precios, guardar en el historial
-    if (!currentData || 
-        currentData.amount !== newData.amount || 
-        currentData.regular_amount !== newData.regular_amount) {
-      
-      // Insertar registro en la tabla de historial
-      const { error: insertError } = await supabase
-        .from('tracked_item_history')
-        .insert({
-          tracked_item_id: trackedItemId,
-          price: currentData?.amount || newData.amount,
-          regular_price: currentData?.regular_amount || newData.regular_amount,
-          status: currentData?.status || newData.status,
-          available_quantity: currentData?.available_quantity || newData.available_quantity,
-          created_at: new Date().toISOString()
-        });
-      
-      if (insertError) {
-        console.error(`Error al guardar historial para tracked_item ${trackedItemId}:`, insertError);
-      }
-    }
-    
-  } catch (error) {
-    console.error(`Error guardando historial para tracked_item ${trackedItemId}:`, error);
   }
 }
