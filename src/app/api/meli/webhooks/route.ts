@@ -121,8 +121,16 @@ async function processItemUpdate(user_id: string, itemId: string) {
     // await updateTrackedItem(itemId, itemData);
 
     // Actualizar la hoja de cálculo de Google Sheets
-    await syncItemToSheet(itemData); 
-
+// Al final del todo:
+      try {
+        await fetch(`${process.env.SELF_BASE_URL}/api/internal/sync-sheet`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(itemData)
+        });
+      } catch (err) {
+        console.error('Error sincronizando con Google Sheets:', err);
+      }
     console.log(`Item ${itemId} actualizado correctamente`);
   } catch (error) {
     console.error(`Error procesando actualización del item ${itemId}:`, error);
