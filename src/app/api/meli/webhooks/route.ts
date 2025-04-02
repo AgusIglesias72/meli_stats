@@ -19,46 +19,47 @@ interface MercadoLibreNotification {
 export async function POST(request: NextRequest) {
   const start = performance.now();
 
-  // Clonar el request para poder leerlo después de responder
-  const clonedRequest = request.clone();
+  
+  let notification: MercadoLibreNotification | null = null;
+
+  try {
+    // Extraer la notificación del cuerpo de la solicitud
+    notification = await request.json();
+  } catch (err) {
+    console.error('Error parseando JSON del request:', err);
+  }
 
   // Devolver respuesta inmediata para cumplir con el SLA de Mercado Libre (<500ms)
   const response = NextResponse.json(
     { success: true, message: 'Notificación recibida' },
     { status: 200 }
   );
+  if (notification) {
+    (async () => {
+      try {
+        if (!notification.topic || !notification.resource || !notification.user_id) {
+          console.warn('Notificación incompleta:', notification);
+          return;
+        }
 
-  // Procesar en segundo plano sin bloquear la respuesta
-  clonedRequest.json()
-    .then(async (notification: MercadoLibreNotification) => {
-      // Validar que todos los campos necesarios estén presentes
-      if (!notification.topic || !notification.resource || !notification.user_id) {
-        console.warn('Notificación incompleta:', notification);
-        return;
+        if (!notification.topic.includes('items')) {
+          console.log(`Notificación ignorada para topic: ${notification.topic}`);
+          return;
+        }
+
+        const itemIdMatch = notification.resource.match(/\/items\/([A-Za-z0-9]+)/);
+        if (!itemIdMatch) {
+          console.error(`Formato de resource inválido: ${notification.resource}`);
+          return;
+        }
+
+        const itemId = itemIdMatch[1];
+        await processItemUpdate(notification.user_id.toString(), itemId);
+      } catch (err) {
+        console.error('Error en procesamiento en background:', err);
       }
-
-      // Si el topic no contiene "items", simplemente devolvemos éxito
-      // Esto incluye topics como "orders", "shipments", etc.
-      if (!notification.topic.includes('items')) {
-        console.log(`Notificación ignorada para topic: ${notification.topic}`);
-        return;
-      }
-
-      // A partir de aquí sabemos que es un topic relacionado con items (items, items_prices, etc.)
-      // Extraer el ID del producto del resource (formato: '/items/MLA1234567')
-      const itemIdMatch = notification.resource.match(/\/items\/([A-Za-z0-9]+)/);
-      if (!itemIdMatch) {
-        console.error(`Formato de resource inválido para topic de items: ${notification.resource}`);
-        return;
-      }
-
-      const itemId = itemIdMatch[1];
-      // Procesar la actualización del item
-      await processItemUpdate(notification.user_id.toString(), itemId);
-    })
-    .catch((err) => {
-      console.error('Error procesando webhook:', err);
-    });
+    })();
+  }
 
   const end = performance.now();
   console.log(`Respuesta enviada en ${end - start} ms`);
