@@ -34,7 +34,10 @@ export async function POST(request: NextRequest) {
     { success: true, message: 'Notificación recibida' },
     { status: 200 }
   );
+
+  // Procesar la notificación en segundo plano
   if (notification) {
+    console.log('Procesando notificación en segundo plano:', notification);
     (async () => {
       try {
         if (!notification.topic || !notification.resource || !notification.user_id) {
