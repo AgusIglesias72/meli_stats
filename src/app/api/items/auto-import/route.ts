@@ -232,7 +232,7 @@ export async function POST(request: NextRequest) {
     * Esta función maneja correctamente grandes volúmenes de productos (más de 1000).
     */
    async function getAllProductIds(accessToken: string, userId: string): Promise<string[]> {
-     let allIds: Set<string> = new Set(); // Usamos un Set para evitar duplicados automáticamente
+     const allIds: Set<string> = new Set(); // Usamos un Set para evitar duplicados automáticamente
      let scrollId: string | null = null;
      let hasMore = true;
      
