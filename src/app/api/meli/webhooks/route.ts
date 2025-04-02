@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
+export const runtime = 'edge'
+
 // Interfaz para las notificaciones de Mercado Libre
 interface MercadoLibreNotification {
   id: string;
@@ -31,7 +33,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-        // Si el topic no contiene "items", simplemente devolvemos éxito
+    // Si el topic no contiene "items", simplemente devolvemos éxito
     // Esto incluye topics como "orders", "shipments", etc.
     if (!notification.topic.includes('items')) {
       console.log(`Notificación ignorada para topic: ${notification.topic}`);
@@ -53,7 +55,6 @@ export async function POST(request: NextRequest) {
     }
     
     const itemId = itemIdMatch[1];
-    console.log(`Procesando: Item ID: ${itemId}, Topic: ${notification.topic}, User ID: ${notification.user_id}`);
      // Procesar la actualización del item
      await processItemUpdate(notification.user_id.toString(), itemId);
     
