@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
-export const runtime = 'edge'
+// export const runtime = 'edge'
 
 // Interfaz para las notificaciones de Mercado Libre
 interface MercadoLibreNotification {
