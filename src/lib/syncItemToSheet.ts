@@ -3,13 +3,36 @@ import { getSheetsClient } from './googleSheetsClient';
 const SPREADSHEET_ID = '1uESNvCVtMssb56eop9FhisZPNLMPssUDdhonmXI_2b0';
 const SHEET_NAME = 'Items';
 
+function formatToBuenosAires(datetime: string) {
+    const date = new Date(datetime);
+  
+    // Convertimos a horario de Buenos Aires (GMT-3)
+    const options: Intl.DateTimeFormatOptions = {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    };
+  
+    const formatter = new Intl.DateTimeFormat('es-AR', options);
+    const parts = formatter.formatToParts(date);
+  
+    const get = (type: string) => parts.find(p => p.type === type)?.value.padStart(2, '0') ?? '--';
+  
+    return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
+  }
+
 export async function syncItemToSheet(itemData: any) {
   const sheets = getSheetsClient();
 
   const values = [
     [
       itemData.item_id || '',
-      itemData.last_updated || '',
+      formatToBuenosAires(itemData.last_updated) || '',
       itemData.title || '',
       itemData.seller_id || '',
       itemData.category_id || '',
