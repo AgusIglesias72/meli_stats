@@ -21,7 +21,6 @@ export async function POST(request: NextRequest) {
   try {
     // Extraer la notificación del cuerpo de la solicitud
     const notification: MercadoLibreNotification = await request.json();
-    
     // Registrar la notificación recibida para depuración
     console.log('Received notification:', notification);
     
@@ -57,7 +56,8 @@ export async function POST(request: NextRequest) {
     const itemId = itemIdMatch[1];
      // Procesar la actualización del item
      await processItemUpdate(notification.user_id.toString(), itemId);
-    
+  
+     console.log(`Notificación de item procesada correctamente: ${itemId}`);
      return NextResponse.json({ 
        success: true, 
        message: 'Notificación de item procesada correctamente',
