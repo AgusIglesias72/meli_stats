@@ -74,7 +74,7 @@ async function processItemUpdate(user_id: string, itemId: string) {
     // Buscar la tienda del usuario para obtener el access_token
     const { data: store, error: storeError } = await supabase
       .from('stores')
-      .select('id, user_id, access_token')
+      .select('id, ml_user_id, access_token')
       .eq('ml_user_id', user_id)
       .single();
     

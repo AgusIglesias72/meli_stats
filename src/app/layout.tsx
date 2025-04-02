@@ -15,7 +15,6 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.ico",
   },
-  viewport: "width=device-width, initial-scale=1",
   applicationName: "MELI Manager",
   authors: [
     {
@@ -28,6 +27,16 @@ export const metadata: Metadata = {
     { media: "(prefers-color-scheme: dark)", color: "#111213" },
   ],
 };
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#18d096" },
+    { media: "(prefers-color-scheme: dark)", color: "#111213" },
+  ],
+};
+
+
 export default function RootLayout({
   children,
 }: Readonly<{
