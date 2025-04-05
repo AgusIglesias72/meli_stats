@@ -40,6 +40,25 @@ export async function syncItemToSheet(itemData: any) {
       itemData.regular_amount ?? '', // null-aware
       itemData.amount ?? '',
       itemData.permalink || '',
+      itemData.listing_type_id || '',
+      itemData.shipping_mode || '',
+      itemData.shipping_logistic_type || '',
+      itemData.free_shipping || '',
+      itemData.installments_quantity || '',
+      itemData.percentage_fee || '',
+      itemData.meli_percentage_fee || '',
+      itemData.financing_add_on_fee || '',
+      itemData.fixed_fee || '',
+      itemData.sale_fee_amount || '',
+      itemData.shipping_list_cost || '',
+      itemData.shipping_discount_rate || '',
+      itemData.shipping_promoted_amount || '',
+      itemData.promotion_id || '',
+      itemData.campaign_type || '', 
+      itemData.meli_percentage_cashback || '',
+      itemData.seller_percentage || '',
+
+
     ],
   ];
 
