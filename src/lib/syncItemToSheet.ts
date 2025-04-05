@@ -37,19 +37,18 @@ export async function syncItemToSheet(itemData: any) {
       itemData.seller_id || '',
       itemData.category_id || '',
       itemData.status || '',
+      itemData.listing_type_id || '',
       itemData.regular_amount ?? '', // null-aware
       itemData.amount ?? '',
-      itemData.permalink || '',
-      itemData.listing_type_id || '',
       itemData.shipping_mode || '',
       itemData.shipping_logistic_type || '',
       itemData.free_shipping || '',
       itemData.installments_quantity || '',
+      itemData.sale_fee_amount || '',
       itemData.percentage_fee || '',
       itemData.meli_percentage_fee || '',
       itemData.financing_add_on_fee || '',
       itemData.fixed_fee || '',
-      itemData.sale_fee_amount || '',
       itemData.shipping_list_cost || '',
       itemData.shipping_discount_rate || '',
       itemData.shipping_promoted_amount || '',
@@ -57,8 +56,7 @@ export async function syncItemToSheet(itemData: any) {
       itemData.campaign_type || '', 
       itemData.meli_percentage_cashback || '',
       itemData.seller_percentage || '',
-
-
+      itemData.permalink || '',
     ],
   ];
 
