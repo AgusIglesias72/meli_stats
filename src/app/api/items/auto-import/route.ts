@@ -622,7 +622,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
 
     // 3. Obtener detalles específicos del item en la promoción
     const itemPromotionResponse = await fetch(
-      `https://api.mercadolibre.com/seller-promotions/offers/${promotionId}/items?item_id=${itemId}&promotion_type=${promotionType}&app_version=v2`,
+      `https://api.mercadolibre.com/seller-promotions/promotions/${promotionId}/items?item_id=${itemId}&promotion_type=${promotionType}&app_version=v2`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`
