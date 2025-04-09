@@ -3,21 +3,31 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
-export const maxDuration = 59; // This function can run for a maximum of 5 seconds
+// Configuración para Edge Runtime
+export const runtime = 'edge';
+export const preferredRegion = 'auto';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // 60 segundos máximo para la función
 
+// Interfaz para el resultado de procesamiento
+interface ProcessingResult {
+  success: boolean;
+  itemId: string;
+  error?: string;
+}
 
 // POST: Importación masiva de items para trackear
 export async function POST(request: NextRequest) {
   try {
     // Verificar autenticación
-    const authUserId = (await cookies()).get('auth_user_id')?.value;
+    const authUserId = request.cookies.get('auth_user_id')?.value;
     
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
     // Obtener el ID de la tienda seleccionada
-    const selectedStoreId = (await cookies()).get('selected_store_id')?.value;
+    const selectedStoreId = request.cookies.get('selected_store_id')?.value;
     
     if (!selectedStoreId) {
       return NextResponse.json({ error: 'No store selected' }, { status: 400 });
@@ -31,9 +41,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Limitar el número de items a importar
-    if (itemIds.length > 5000) {
+    if (itemIds.length > 10000) {
       return NextResponse.json({ 
-        error: `Too many items (${itemIds.length}). Maximum allowed is 5000.` 
+        error: `Too many items (${itemIds.length}). Maximum allowed is 10000.` 
       }, { status: 400 });
     }
 
@@ -77,7 +87,6 @@ export async function POST(request: NextRequest) {
     const { data: existingItems, error: existingError } = await supabase
       .from('tracked_items_config')
       .select('item_id')
-      .eq('user_id', authUserId)
       .eq('store_id', selectedStoreId)
       .in('item_id', itemIds);
 
@@ -111,19 +120,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Preparar datos para la inserción en batch
+    // Preparar datos para la inserción en batch - solo la configuración inicial
     const itemsToInsert = newItemIds.map(itemId => ({
       user_id: authUserId,
       store_id: selectedStoreId,
       item_id: itemId,
       notes: null,
-      seller_id: '', // Se actualizará después con los datos del vendedor
+      seller_id: '', 
       seller_nickname: '',
-      processing_status: 'pending', // Nuevo campo para seguimiento
-      processing_message: null      // Nuevo campo para mensajes de error
+      processing_status: 'pending',
+      processing_message: null
     }));
 
-    // Insertar todos los nuevos items de una sola vez
+    // Insertar todos los nuevos items de una sola vez - solo la configuración
     const { data: insertedItems, error: insertError } = await supabase
       .from('tracked_items_config')
       .insert(itemsToInsert)
@@ -134,256 +143,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Error adding items to track' }, { status: 500 });
     }
 
-    // Procesar la obtención de datos para los items insertados
-    // Usamos Promise.allSettled para no bloquear si algunos fallan
-    if (insertedItems && insertedItems.length > 0) {
-      const batchSize = 10; // Procesar en lotes más pequeños para no sobrecargar la API
-      const itemGroups = [];
-      const detailedErrors: { id: any; error: any; }[] = [];
-      
-      // Agrupar items para procesar en lotes
-      for (let i = 0; i < insertedItems.length; i += batchSize) {
-        itemGroups.push(insertedItems.slice(i, i + batchSize));
-      }
-      
-      // Procesar cada grupo secuencialmente
-      let fetchSuccess = 0;
-      let fetchFailed = 0;
-      
-      for (const group of itemGroups) {
-        const results = await Promise.allSettled(
-          group.map(async (item) => {
-            try {
-                // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
-                const itemResponse = await fetch(`https://api.mercadolibre.com/items/${item.item_id}`, {
-                  headers: {
-                    'Authorization': `Bearer ${storeData.access_token}`
-                  }
-                });
-              
-                // Si la respuesta no es exitosa, manejar el error directamente sin intentar parsearlo como JSON
-                if (!itemResponse.ok) {
-                  const errorMessage = `Error API: ${itemResponse.status} - ${itemResponse.statusText}`;
-                  
-                  // Actualizar el estado del item a error
-                  await supabase
-                    .from('tracked_items_config')
-                    .update({
-                      processing_status: 'error',
-                      processing_message: errorMessage
-                    })
-                    .eq('id', item.id);
-                    
-                  detailedErrors.push({
-                    id: item.item_id,
-                    error: errorMessage
-                  });
-                    
-                  throw new Error(`Error fetching item ${item.item_id}: ${itemResponse.statusText}`);
-                }
-              
-                // AHORA verificamos si la respuesta es JSON antes de procesarla
-                const contentType = itemResponse.headers.get('content-type');
-                if (!contentType || !contentType.includes('application/json')) {
-                  const errorText = await itemResponse.text().catch(() => 'No text content');
-                  const errorMessage = `Respuesta no es JSON: ${itemResponse.status} - ${errorText.substring(0, 100)}`;
-                  
-                  // Actualizar el estado del item a error
-                  await supabase
-                    .from('tracked_items_config')
-                    .update({
-                      processing_status: 'error',
-                      processing_message: errorMessage
-                    })
-                    .eq('id', item.id);
-                    
-                  detailedErrors.push({
-                    id: item.item_id,
-                    error: errorMessage
-                  });
-                    
-                  throw new Error(`Respuesta no es JSON para item ${item.item_id}: ${itemResponse.status}`);
-                }
-              
-                // Solo si llegamos aquí, intentamos parsear como JSON
-                const itemData = await itemResponse.json().catch(parseError => {
-                  const errorMessage = `Error parsing JSON: ${parseError.message}`;
-                  throw new Error(errorMessage);
-                });
-              
-
-              // Obtener información del vendedor
-              const sellerId = itemData.seller_id;
-              let sellerNickname = '';
-              
-              try {
-                const sellerResponse = await fetch(`https://api.mercadolibre.com/users/${sellerId}`, {
-                  headers: {
-                    'Authorization': `Bearer ${storeData.access_token}`
-                  }
-                });
-                
-                // Verificar si la respuesta del vendedor es JSON
-                const sellerContentType = sellerResponse.headers.get('content-type');
-                if (!sellerContentType || !sellerContentType.includes('application/json')) {
-                  console.warn(`Respuesta de vendedor no es JSON para item ${item.item_id}`);
-                  // Continuamos pero sin información del vendedor
-                } else if (sellerResponse.ok) {
-                  const sellerData = await sellerResponse.json();
-                  sellerNickname = sellerData.nickname || '';
-                }
-              } catch (error) {
-                console.error(`Error fetching seller info for item ${item.item_id}:`, error);
-                // Continuamos incluso si hay error al obtener datos del vendedor
-              }
-
-              // Actualizar tracked_items_config con la información del vendedor y estado de éxito
-              await supabase
-                .from('tracked_items_config')
-                .update({
-                  seller_id: sellerId,
-                  seller_nickname: sellerNickname,
-                  processing_status: 'success',
-                  processing_message: null
-                })
-                .eq('id', item.id);
-
-              // Extraer la marca de los atributos si existe
-              let brand = null;
-              if (itemData.attributes && Array.isArray(itemData.attributes)) {
-                const brandAttribute = itemData.attributes.find((attr: any) => attr.id === 'BRAND'); 
-                if (brandAttribute && brandAttribute.value_name) {
-                  brand = brandAttribute.value_name;
-                }
-              }
-
-              // Obtener información del precio de venta
-              let salePriceData = null;
-              try {
-                const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${item.item_id}/sale_price`, {
-                  headers: {
-                    'Authorization': `Bearer ${storeData.access_token}`
-                  }
-                });
-
-                // Verificar si la respuesta del precio es JSON
-                const priceContentType = salePriceResponse.headers.get('content-type');
-                if (priceContentType && priceContentType.includes('application/json') && salePriceResponse.ok) {
-                  salePriceData = await salePriceResponse.json();
-                }
-              } catch (error) {
-                console.error(`Error fetching sale price for item ${item.item_id}:`, error);
-                // Continuamos incluso si hay error al obtener el precio
-              }
-
-              // Guardar los datos en tracked_items_data
-              const { error: dataInsertError } = await supabase
-                .from('tracked_items_data')
-                .insert({
-                  config_id: item.id,
-                  item_id: item.item_id,
-                  site_id: itemData.site_id,
-                  title: itemData.title,
-                  seller_id: itemData.seller_id,
-                  seller_nickname: sellerNickname,
-                  category_id: itemData.category_id,
-                  official_store_id: itemData.official_store_id,
-                  price: itemData.price,
-                  base_price: itemData.base_price,
-                  currency_id: itemData.currency_id,
-                  available_quantity: itemData.available_quantity,
-                  permalink: itemData.permalink,
-                  thumbnail: itemData.thumbnail,
-                  status: itemData.status,
-                  regular_amount: salePriceData?.regular_amount || null,
-                  amount: salePriceData?.amount || null,
-                  brand: brand,
-                  last_updated: new Date().toISOString(),
-                  created_at: new Date().toISOString()
-                });
-              
-              if (dataInsertError) {
-                console.error(`Error inserting data for item ${item.item_id}:`, dataInsertError);
-                // Actualizar el estado del item en caso de error al insertar datos
-                await supabase
-                  .from('tracked_items_config')
-                  .update({
-                    processing_status: 'error_data',
-                    processing_message: `Error al guardar datos: ${dataInsertError.message}`
-                  })
-                  .eq('id', item.id);
-                  
-                throw new Error(`Error inserting data for item ${item.item_id}: ${dataInsertError.message}`);
-              }
-              
-              return { success: true };
-            } catch (error: any) {
-              console.error(`Error processing item ${item.item_id}:`, error);
-              
-              // Si no se actualizó el estado anteriormente, hacerlo ahora
-              await supabase
-                .from('tracked_items_config')
-                .update({
-                  processing_status: 'error',
-                  processing_message: error.message || 'Unknown error'
-                })
-                .eq('id', item.id);
-                
-              // Añadir a la lista de errores detallados si no se añadió antes
-              if (!detailedErrors.some(e => e.id === item.item_id)) {
-                detailedErrors.push({
-                  id: item.item_id,
-                  error: error.message || 'Unknown error'
-                });
-              }
-              
-              return { success: false, error: error.message || 'Unknown error' };
-            }
-          })
-        );
-        
-        // Contar los éxitos y fallos en este lote
-        fetchSuccess += results.filter(r => 
-          r.status === 'fulfilled' && (r.value as any).success
-        ).length;
-        
-        fetchFailed += results.filter(r => 
-          r.status === 'rejected' || !(r.value as any)?.success
-        ).length;
-        
-        // Pequeña pausa entre grupos para evitar rate limits
-        if (itemGroups.indexOf(group) < itemGroups.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-
-      // Preparar respuesta con información detallada
-      return NextResponse.json({
-        success: true,
-        message: 'Bulk import processed successfully',
-        results: {
-          total: itemIds.length,
-          new: insertedItems.length,
-          existing: existingItemsMap.size,
-          successful: fetchSuccess,
-          failed: fetchFailed,
-          errors: detailedErrors.slice(0, 50) // Limitamos a 50 errores para no sobrecargar la respuesta
-        }
-      });
-    }
-
-    // Preparar respuesta
-    return NextResponse.json({
+    // Devolver respuesta inmediata para no bloquear al cliente
+    // Esta es una mejora clave - el cliente obtiene una respuesta rápida mientras
+    // el procesamiento continúa en segundo plano
+    const responseData = {
       success: true,
-      message: 'Bulk import processed successfully',
+      message: 'Bulk import initiated successfully',
       results: {
         total: itemIds.length,
         new: insertedItems?.length || 0,
         existing: existingItemsMap.size,
-        failed: 0,
-        errors: []
+        processing: true,
+        jobId: Date.now().toString() // Un identificador simple para el trabajo
       }
-    });
+    };
+
+    // Iniciar el procesamiento en segundo plano sin bloquear la respuesta
+    if (insertedItems && insertedItems.length > 0) {
+      // Procesamiento asíncrono en segundo plano
+      processItemsInBackground(insertedItems, storeData, supabase)
+        .catch(err => console.error('Background processing error:', err));
+    }
+
+    return NextResponse.json(responseData);
+
   } catch (error: any) {
     console.error('Error processing bulk import request:', error);
     return NextResponse.json({ 
@@ -391,4 +174,275 @@ export async function POST(request: NextRequest) {
       message: error.message || 'Unknown error' 
     }, { status: 500 });
   }
+}
+
+/**
+ * Procesa los items en segundo plano, en lotes, sin bloquear la respuesta al cliente
+ */
+async function processItemsInBackground(
+  items: Array<{id: string, item_id: string}>, 
+  storeData: any, 
+  supabase: any
+) {
+  // Tamaño de lote optimizado para balancear velocidad y límites de API
+  const batchSize = 20;
+  
+  // Procesar en lotes paralelos para mayor velocidad
+  // pero limitando la concurrencia para no sobrecargar la API
+  const concurrencyLimit = 5;
+  
+  for (let startIdx = 0; startIdx < items.length; startIdx += batchSize * concurrencyLimit) {
+    const batchPromises = [];
+    
+    // Crear múltiples promesas para procesamiento paralelo
+    for (let i = 0; i < concurrencyLimit && startIdx + i * batchSize < items.length; i++) {
+      const batchStartIdx = startIdx + i * batchSize;
+      const batchEndIdx = Math.min(batchStartIdx + batchSize, items.length);
+      const batch = items.slice(batchStartIdx, batchEndIdx);
+      
+      batchPromises.push(processBatch(batch, storeData, supabase));
+    }
+    
+    // Esperar a que todos los lotes actuales terminen antes de continuar
+    await Promise.all(batchPromises);
+  }
+  
+  console.log(`Background processing completed for ${items.length} items`);
+}
+
+/**
+ * Procesa un lote de items
+ */
+async function processBatch(
+  batch: Array<{id: string, item_id: string}>, 
+  storeData: any, 
+  supabase: any
+): Promise<void> {
+  const results = await Promise.allSettled(
+    batch.map(item => processItem(item, storeData, supabase))
+  );
+  
+  // Contar éxitos y fallos
+  const successful = results.filter(r => r.status === 'fulfilled').length;
+  const failed = batch.length - successful;
+  
+  console.log(`Batch processed: ${successful} successful, ${failed} failed`);
+}
+
+/**
+ * Procesa un solo item, con manejo de errores y reintentos
+ */
+async function processItem(
+  item: {id: string, item_id: string}, 
+  storeData: any, 
+  supabase: any
+): Promise<ProcessingResult> {
+  const maxRetries = 2;
+  let retryCount = 0;
+  
+  while (retryCount <= maxRetries) {
+    try {
+      // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
+      const itemResponse = await fetch(`https://api.mercadolibre.com/items/${item.item_id}`, {
+        headers: {
+          'Authorization': `Bearer ${storeData.access_token}`
+        }
+      });
+    
+      // Si la respuesta no es exitosa, manejar el error
+      if (!itemResponse.ok) {
+        // En caso de error 429 (rate limit), esperar y reintentar
+        if (itemResponse.status === 429 && retryCount < maxRetries) {
+          retryCount++;
+          // Esperar más tiempo en cada reintento
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+          continue;
+        }
+        
+        const errorMessage = `Error API: ${itemResponse.status} - ${itemResponse.statusText}`;
+        
+        // Actualizar el estado del item a error
+        await supabase
+          .from('tracked_items_config')
+          .update({
+            processing_status: 'error',
+            processing_message: errorMessage
+          })
+          .eq('id', item.id);
+          
+        return {
+          success: false,
+          itemId: item.item_id,
+          error: errorMessage
+        };
+      }
+    
+      // Verificar si la respuesta es JSON antes de procesarla
+      const contentType = itemResponse.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const errorText = await itemResponse.text().catch(() => 'No text content');
+        const errorMessage = `Respuesta no es JSON: ${errorText.substring(0, 100)}`;
+        
+        // Actualizar el estado del item a error
+        await supabase
+          .from('tracked_items_config')
+          .update({
+            processing_status: 'error',
+            processing_message: errorMessage
+          })
+          .eq('id', item.id);
+          
+        return {
+          success: false,
+          itemId: item.item_id,
+          error: errorMessage
+        };
+      }
+    
+      // Parsear la respuesta JSON
+      const itemData = await itemResponse.json();
+
+      // Obtener información del vendedor
+      const sellerId = itemData.seller_id;
+      let sellerNickname = '';
+      
+      try {
+        const sellerResponse = await fetch(`https://api.mercadolibre.com/users/${sellerId}`, {
+          headers: {
+            'Authorization': `Bearer ${storeData.access_token}`
+          }
+        });
+        
+        if (sellerResponse.ok) {
+          const sellerData = await sellerResponse.json();
+          sellerNickname = sellerData.nickname || '';
+        }
+      } catch (error) {
+        console.error(`Error fetching seller info for item ${item.item_id}:`, error);
+        // Continuamos incluso si hay error al obtener datos del vendedor
+      }
+
+      // Actualizar tracked_items_config con la información del vendedor y estado de éxito
+      await supabase
+        .from('tracked_items_config')
+        .update({
+          seller_id: sellerId,
+          seller_nickname: sellerNickname,
+          processing_status: 'success',
+          processing_message: null
+        })
+        .eq('id', item.id);
+
+      // Extraer la marca de los atributos si existe
+      let brand = null;
+      if (itemData.attributes && Array.isArray(itemData.attributes)) {
+        const brandAttribute = itemData.attributes.find((attr: any) => attr.id === 'BRAND'); 
+        if (brandAttribute && brandAttribute.value_name) {
+          brand = brandAttribute.value_name;
+        }
+      }
+
+      // Obtener información del precio de venta
+      let salePriceData = null;
+      try {
+        const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${item.item_id}/sale_price`, {
+          headers: {
+            'Authorization': `Bearer ${storeData.access_token}`
+          }
+        });
+
+        if (salePriceResponse.ok) {
+          salePriceData = await salePriceResponse.json();
+        }
+      } catch (error) {
+        console.error(`Error fetching sale price for item ${item.item_id}:`, error);
+        // Continuamos incluso si hay error al obtener el precio
+      }
+
+      // Guardar los datos en tracked_items_data
+      const { error: dataInsertError } = await supabase
+        .from('tracked_items_data')
+        .insert({
+          config_id: item.id,
+          item_id: item.item_id,
+          site_id: itemData.site_id,
+          title: itemData.title,
+          seller_id: itemData.seller_id,
+          seller_nickname: sellerNickname,
+          category_id: itemData.category_id,
+          official_store_id: itemData.official_store_id,
+          price: itemData.price,
+          base_price: itemData.base_price,
+          currency_id: itemData.currency_id,
+          available_quantity: itemData.available_quantity,
+          permalink: itemData.permalink,
+          thumbnail: itemData.thumbnail,
+          status: itemData.status,
+          regular_amount: salePriceData?.regular_amount || null,
+          amount: salePriceData?.amount || null,
+          brand: brand,
+          last_updated: new Date().toISOString(),
+          created_at: new Date().toISOString()
+        });
+      
+      if (dataInsertError) {
+        console.error(`Error inserting data for item ${item.item_id}:`, dataInsertError);
+        // Actualizar el estado del item en caso de error al insertar datos
+        await supabase
+          .from('tracked_items_config')
+          .update({
+            processing_status: 'error_data',
+            processing_message: `Error al guardar datos: ${dataInsertError.message}`
+          })
+          .eq('id', item.id);
+          
+        return {
+          success: false,
+          itemId: item.item_id,
+          error: `Error inserting data: ${dataInsertError.message}`
+        };
+      }
+      
+      return { 
+        success: true,
+        itemId: item.item_id
+      };
+      
+    } catch (error: any) {
+      // Si hay error y aún tenemos reintentos, reintentar
+      if (retryCount < maxRetries) {
+        retryCount++;
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        continue;
+      }
+      
+      console.error(`Error processing item ${item.item_id}:`, error);
+      
+      // Actualizar el estado del item
+      try {
+        await supabase
+          .from('tracked_items_config')
+          .update({
+            processing_status: 'error',
+            processing_message: error.message || 'Unknown error'
+          })
+          .eq('id', item.id);
+      } catch (updateError) {
+        console.error(`Error updating item status for ${item.item_id}:`, updateError);
+      }
+      
+      return { 
+        success: false,
+        itemId: item.item_id,
+        error: error.message || 'Unknown error'
+      };
+    }
+  }
+  
+  // Este punto nunca debería alcanzarse debido a los returns en el bucle
+  return {
+    success: false,
+    itemId: item.item_id,
+    error: 'Unexpected execution flow'
+  };
 }
