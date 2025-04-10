@@ -295,7 +295,26 @@ export async function POST(request: NextRequest) {
 
         
         // Extraer el SKU de los atributos
-        const sku = extractSkuFromAttributes(item.attributes);
+        let sku = extractSkuFromAttributes(item.attributes);
+
+
+        if (!sku) {
+          const related_item_id = item.item_relations[0].id;
+          const related_response = await fetch(`https://api.mercadolibre.com/items/${related_item_id}`, {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`
+            }
+          });
+
+          if (!related_response.ok) {
+            console.error(`Error fetching related items: ${related_response.status} - ${related_response.statusText}`);
+            continue;
+          }
+          
+          const related_data = await related_response.json();
+          sku = extractSkuFromAttributes(related_data.attributes);
+        }
+
         
         // Obtener costos de envío para el vendedor
         const shippingCosts = await getShippingCosts(item.id, userId, accessToken);

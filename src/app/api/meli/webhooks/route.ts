@@ -207,6 +207,8 @@ async function processItemUpdate(user_id: string, itemId: string) {
     // Actualizar el item en nuestra base de datos
     await updateItemInDatabase(itemId, itemData, store.id);
 
+    console.log('sku', itemData.sku);
+
     // Actualizar la hoja de cálculo de Google Sheets
     try {
       await fetch(`${process.env.SELF_BASE_URL}/api/internal/sync-sheet`, {
@@ -405,7 +407,24 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
     );
 
     // Extraer el SKU de los atributos
-    const sku = extractSkuFromAttributes(data.attributes);
+    let sku = extractSkuFromAttributes(data.attributes);
+
+    if (!sku) {
+      const related_item_id = data.item_relations[0].id;
+      const related_response = await fetch(`https://api.mercadolibre.com/items/${related_item_id}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
+      });
+
+      if (!related_response.ok) {
+        console.error(`Error fetching related items: ${related_response.status} - ${related_response.statusText}`);
+        return null;
+      }
+
+      const related_data = await related_response.json();
+      sku = extractSkuFromAttributes(related_data.attributes);  
+    }
     
     // Obtener detalles de tarifas
     const price = salePrices.amount || data.price;
