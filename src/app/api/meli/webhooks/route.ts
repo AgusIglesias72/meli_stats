@@ -410,7 +410,11 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
     let sku = extractSkuFromAttributes(data.attributes);
 
     if (!sku) {
-      const related_item_id = data.item_relations[0].id;
+      const related_item_id = data?.item_relations?.[0]?.id;
+      if (!related_item_id) {
+        console.error(`No se encontró un item relacionado para el item ${itemId}`);
+        return null;
+      }
       const related_response = await fetch(`https://api.mercadolibre.com/items/${related_item_id}`, {
         headers: {
           'Authorization': `Bearer ${accessToken}`
