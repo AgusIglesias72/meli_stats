@@ -409,6 +409,7 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
     // Extraer el SKU de los atributos
     let sku = extractSkuFromAttributes(data.attributes);
 
+  /*
     if (!sku) {
       const related_item_id = data?.item_relations?.[0]?.id;
       if (!related_item_id) {
@@ -429,6 +430,7 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
       const related_data = await related_response.json();
       sku = extractSkuFromAttributes(related_data.attributes);  
     }
+  */
     
     // Obtener detalles de tarifas
     const price = salePrices.amount || data.price;
