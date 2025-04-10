@@ -407,7 +407,7 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
     );
 
     // Extraer el SKU de los atributos
-    let sku = extractSkuFromAttributes(data.attributes);
+    const sku = extractSkuFromAttributes(data.attributes);
 
   /*
     if (!sku) {

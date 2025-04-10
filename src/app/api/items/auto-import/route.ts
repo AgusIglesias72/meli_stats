@@ -295,7 +295,7 @@ export async function POST(request: NextRequest) {
 
         
         // Extraer el SKU de los atributos
-        let sku = extractSkuFromAttributes(item.attributes);
+        const sku = extractSkuFromAttributes(item.attributes);
 
 /*
         if (!sku) {
