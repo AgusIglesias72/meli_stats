@@ -39,6 +39,8 @@ export async function GET(request: NextRequest) {
         item_id,
         notes,
         created_at,
+        seller_id,
+        seller_nickname,
         tracked_items_data (
           id,
           price,
@@ -71,7 +73,6 @@ export async function GET(request: NextRequest) {
     const processedItems = trackedItems.map(item => {
       const latestData = item.tracked_items_data && item.tracked_items_data.length > 0
         ? item.tracked_items_data[0] // Asumimos que el más reciente viene primero
-        
         : null;
 
       return {
@@ -79,6 +80,8 @@ export async function GET(request: NextRequest) {
         item_id: item.item_id,
         notes: item.notes,
         created_at: item.created_at,
+        seller_id: item.seller_id,
+        seller_nickname: item.seller_nickname,
         data: latestData
       };
     });
@@ -176,8 +179,8 @@ export async function POST(request: NextRequest) {
         itemId: existingItem.id 
       }, { status: 409 });
     }
-  // Ahora, primero obtenemos los datos del ítem antes de insertarlo
-    // para asegurarnos de tener toda la información desde el principio
+    
+    // IMPORTANTE: Primero obtenemos los datos del ítem y luego insertamos el registro
     let itemData;
     let salePriceData = null;
     let sellerNickname = '';
@@ -239,6 +242,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Ahora que tenemos todos los datos, añadimos la configuración con la información del vendedor
+    // CORREGIDO: Configurar processing_status como 'success' desde el principio
     const { data: newItem, error: insertError } = await supabase
       .from('tracked_items_config')
       .insert({
@@ -248,7 +252,7 @@ export async function POST(request: NextRequest) {
         notes: notes || null,
         seller_id: itemData.seller_id || '',
         seller_nickname: sellerNickname || '',
-        processing_status: 'success' // Marcar como éxito en lugar de 'pending'
+        processing_status: 'success' // Marcar como éxito directamente
       })
       .select()
       .single();
@@ -259,7 +263,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Guardar los datos en tracked_items_data
-    await supabase
+    const { error: dataInsertError } = await supabase
       .from('tracked_items_data')
       .insert({
         config_id: newItem.id,
@@ -284,6 +288,20 @@ export async function POST(request: NextRequest) {
         created_at: new Date().toISOString()
       });
 
+    if (dataInsertError) {
+      console.error('Error inserting tracked item data:', dataInsertError);
+      // Si hay error al insertar los datos, actualizar el estado del item
+      await supabase
+        .from('tracked_items_config')
+        .update({
+          processing_status: 'error_data',
+          processing_message: `Error al guardar datos: ${dataInsertError.message}`
+        })
+        .eq('id', newItem.id);
+        
+      return NextResponse.json({ error: 'Error saving item data' }, { status: 500 });
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Item added to tracking',
@@ -293,7 +311,12 @@ export async function POST(request: NextRequest) {
           title: itemData.title,
           price: itemData.price,
           status: itemData.status,
-          seller_nickname: sellerNickname
+          seller_nickname: sellerNickname,
+          thumbnail: itemData.thumbnail,
+          permalink: itemData.permalink,
+          currency_id: itemData.currency_id,
+          regular_amount: salePriceData?.regular_amount || null,
+          amount: salePriceData?.amount || null
         }
       }
     });
@@ -302,6 +325,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
 // DELETE: Elimina un item trackeado
 export async function DELETE(request: NextRequest) {
   try {

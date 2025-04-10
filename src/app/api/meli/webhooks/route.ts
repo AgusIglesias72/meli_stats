@@ -403,6 +403,9 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
       data.listing_type_id,
       data.tags || []
     );
+
+    // Extraer el SKU de los atributos
+    const sku = extractSkuFromAttributes(data.attributes);
     
     // Obtener detalles de tarifas
     const price = salePrices.amount || data.price;
@@ -430,6 +433,7 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
       status: data.status,
       permalink: data.permalink,
       thumbnail: data.thumbnail,
+      sku: sku,
       // Datos de precios promocionales
       amount: salePrices.amount,
       regular_amount: salePrices.regular_amount,
@@ -520,4 +524,22 @@ async function updateItemInDatabase(itemId: string, itemData: any, storeId: stri
     console.error(`Error en la actualización del item ${itemId} en la base de datos:`, error);
     throw error;
   }
+}
+
+
+// Añadir esta función al inicio del archivo
+function extractSkuFromAttributes(attributes: any[]): string | null {
+  if (!attributes || !Array.isArray(attributes)) {
+    return null;
+  }
+  
+  // Buscar el atributo con id "SELLER_SKU"
+  const skuAttribute = attributes.find(attr => attr.id === "SELLER_SKU");
+  
+  // Si lo encontramos, devolver su value_name
+  if (skuAttribute && skuAttribute.value_name) {
+    return skuAttribute.value_name;
+  }
+  
+  return null;
 }

@@ -292,6 +292,10 @@ export async function POST(request: NextRequest) {
           item.tags || [],
           item.listing_type_id
         );
+
+        
+        // Extraer el SKU de los atributos
+        const sku = extractSkuFromAttributes(item.attributes);
         
         // Obtener costos de envío para el vendedor
         const shippingCosts = await getShippingCosts(item.id, userId, accessToken);
@@ -318,6 +322,7 @@ export async function POST(request: NextRequest) {
           permalink: item.permalink,
           thumbnail: item.thumbnail,
           status: item.status,
+          sku: sku,
           // Nuevos campos
           listing_type_id: item.listing_type_id,
           shipping_mode: item.shipping?.mode || null,
@@ -660,4 +665,25 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
       seller_percentage: null
     };
   }
+}
+
+/**
+ * Extrae el SKU del vendedor desde el array de atributos del producto
+ * @param attributes Array de atributos del producto de Mercado Libre
+ * @returns El valor del SKU si existe, o null si no se encuentra
+ */
+function extractSkuFromAttributes(attributes: any[]): string | null {
+  if (!attributes || !Array.isArray(attributes)) {
+    return null;
+  }
+  
+  // Buscar el atributo con id "SELLER_SKU"
+  const skuAttribute = attributes.find(attr => attr.id === "SELLER_SKU");
+  
+  // Si lo encontramos, devolver su value_name
+  if (skuAttribute && skuAttribute.value_name) {
+    return skuAttribute.value_name;
+  }
+  
+  return null;
 }

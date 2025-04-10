@@ -27,8 +27,8 @@ interface ErrorItem {
   processing_message: string | null;
 }
 
-const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({ 
-  onImportComplete 
+const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
+  onImportComplete
 }) => {
   const [inputType, setInputType] = useState<'text' | 'file'>('text');
   const [itemIds, setItemIds] = useState<string[]>([]);
@@ -41,7 +41,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
   const [statusCounts, setStatusCounts] = useState<StatusCounts | null>(null);
   const [failedItems, setFailedItems] = useState<ErrorItem[]>([]);
   const [selectedTab, setSelectedTab] = useState('input');
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -63,7 +63,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
       clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
     }
-    
+
     return () => {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
@@ -75,23 +75,23 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
   const pollImportStatus = async () => {
     try {
       const response = await fetch('/api/tracked-items/bulk/status?counts_only=true');
-      
+
       if (!response.ok) {
         throw new Error('Error fetching import status');
       }
-      
+
       const data = await response.json();
       setStatusCounts(data.counts);
-      
+
       // Si no hay items pendientes, obtener los items con error
       if (data.counts.pending === 0 && (data.counts.error > 0 || data.counts.error_data > 0)) {
         fetchFailedItems();
       }
-      
+
       // Si no hay items pendientes, detener el polling
       if (data.counts.pending === 0) {
         setStatusPolling(false);
-        
+
         // Notificar que la importación está completa
         if (onImportComplete) {
           await onImportComplete();
@@ -107,11 +107,11 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
   const fetchFailedItems = async () => {
     try {
       const response = await fetch('/api/tracked-items/bulk/status?status=error&limit=100');
-      
+
       if (!response.ok) {
         throw new Error('Error fetching failed items');
       }
-      
+
       const data = await response.json();
       setFailedItems(data.items || []);
     } catch (err) {
@@ -123,7 +123,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
   const retryFailedItems = async (itemIds: string[]) => {
     try {
       setIsLoading(true);
-      
+
       const response = await fetch('/api/tracked-items/bulk/status', {
         method: 'POST',
         headers: {
@@ -131,17 +131,17 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
         },
         body: JSON.stringify({ itemIds }),
       });
-      
+
       if (!response.ok) {
         throw new Error('Error retrying failed items');
       }
-      
+
       // Iniciar polling de nuevo
       setStatusPolling(true);
-      
+
       // Limpiar la lista de fallidos
       setFailedItems([]);
-      
+
       // Actualizar pestaña a status
       setSelectedTab('status');
     } catch (err: any) {
@@ -168,13 +168,13 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setError(null);
     const file = e.target.files?.[0];
-    
+
     if (!file) {
       return;
     }
-    
+
     setIsLoading(true);
-    
+
     // Verificar el tipo de archivo
     if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
       // Procesar CSV
@@ -207,7 +207,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
       setError('Unsupported file type. Please upload a CSV or TXT file.');
       setIsLoading(false);
     }
-    
+
     // Limpiar el input para permitir cargar el mismo archivo nuevamente
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -217,20 +217,20 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
   // Procesar resultados del archivo
   const processFileResults = (data: any[]) => {
     const ids: string[] = [];
-    
+
     data.forEach(row => {
       // Si es un array (CSV), tomar el primer valor de cada fila
       if (Array.isArray(row)) {
         const id = row[0]?.toString().trim();
         if (id) ids.push(id);
-      } 
+      }
       // Si es string (posible línea de texto)
       else if (typeof row === 'string') {
         const id = row.trim();
         if (id) ids.push(id);
       }
     });
-    
+
     setItemIds(ids);
     setRawInput(ids.join('\n'));
   };
@@ -239,20 +239,21 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
   const processTextInput = () => {
     if (!rawInput.trim()) {
       setError('Please enter at least one item ID');
-      return;
+      return null;
     }
-    
+
     // Separar por líneas, comas o espacios y filtrar valores vacíos
+    // CORREGIDO: Mejorar el regex para separar correctamente los IDs
     const ids = rawInput
-      .split(/[\n,\s]+/)
+      .split(/[\n,;\s]+/)  // Separar por saltos de línea, comas, punto y coma o espacios
       .map(id => id.trim())
       .filter(id => id);
-    
+
     if (ids.length === 0) {
       setError('No valid item IDs found');
-      return;
+      return null;
     }
-    
+
     setItemIds(ids);
     return ids;
   };
@@ -260,41 +261,46 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
   // Iniciar la importación
   const startImport = async () => {
     try {
+      let ids;
       if (inputType === 'text') {
-        const ids = processTextInput();
-        if (!ids) return;
+        ids = processTextInput();
+        if (!ids || ids.length === 0) {
+          return;
+        }
+      } else {
+        // Para el tipo file, los IDs ya deberían estar en itemIds
+        if (itemIds.length === 0) {
+          setError('No valid item IDs found');
+          return;
+        }
+        ids = itemIds;
       }
-      
-      if (itemIds.length === 0) {
-        setError('No valid item IDs found');
-        return;
-      }
-      
+
       setIsImporting(true);
       setError(null);
-      
+
       const response = await fetch('/api/tracked-items/bulk', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ itemIds }),
+        body: JSON.stringify({ itemIds: ids }),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Error importing items');
       }
-      
+
       const result = await response.json();
       setImportResult(result);
-      
+
       // Iniciar polling de estado
       setStatusPolling(true);
-      
+
       // Cambiar a la pestaña de estado
       setSelectedTab('status');
-      
+
     } catch (err: any) {
       setError(err.message || 'Error starting import');
     } finally {
@@ -310,7 +316,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
           Importa múltiples productos para seguimiento utilizando sus IDs.
         </CardDescription>
       </CardHeader>
-      
+
       <Tabs value={selectedTab} onValueChange={setSelectedTab}>
         <TabsList className="mx-6">
           <TabsTrigger value="input">Entrada</TabsTrigger>
@@ -321,31 +327,31 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
             </TabsTrigger>
           )}
         </TabsList>
-        
+
         <CardContent>
           <TabsContent value="input" className="mt-4">
             <div className="space-y-4">
               <div className="flex space-x-4">
-                <Button 
-                  variant={inputType === 'text' ? 'default' : 'outline'} 
+                <Button
+                  variant={inputType === 'text' ? 'default' : 'outline'}
                   onClick={() => setInputType('text')}
                 >
                   Texto
                 </Button>
-                <Button 
-                  variant={inputType === 'file' ? 'default' : 'outline'} 
+                <Button
+                  variant={inputType === 'file' ? 'default' : 'outline'}
                   onClick={() => setInputType('file')}
                 >
                   Archivo
                 </Button>
               </div>
-              
+
               {inputType === 'text' && (
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">
                     Ingresa los IDs de producto, uno por línea o separados por comas.
                   </p>
-                  <Textarea 
+                  <Textarea
                     placeholder="MLA1234567&#10;MLA7654321&#10;MLA9876543"
                     rows={10}
                     value={rawInput}
@@ -354,7 +360,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                   />
                 </div>
               )}
-              
+
               {inputType === 'file' && (
                 <div className="space-y-4">
                   <div className="border-2 border-dashed rounded-md p-8 text-center">
@@ -376,7 +382,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                       Seleccionar Archivo
                     </Button>
                   </div>
-                  
+
                   {itemIds.length > 0 && (
                     <div className="bg-muted p-3 rounded-md">
                       <p className="text-sm mb-2">
@@ -390,7 +396,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                   )}
                 </div>
               )}
-              
+
               {error && (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
@@ -398,10 +404,10 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
-              
+
               <div className="flex justify-end space-x-2">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={() => {
                     setRawInput('');
                     setItemIds([]);
@@ -410,9 +416,9 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                 >
                   Limpiar
                 </Button>
-                <Button 
-                  onClick={startImport} 
-                  disabled={isLoading || isImporting || itemIds.length === 0}
+                <Button
+                  onClick={startImport}
+                  disabled={isLoading || isImporting || (inputType === 'text' ? !rawInput.trim() : itemIds.length === 0)}
                 >
                   {isImporting ? (
                     <>
@@ -426,7 +432,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
               </div>
             </div>
           </TabsContent>
-          
+
           <TabsContent value="status" className="mt-4">
             <div className="space-y-6">
               {statusPolling ? (
@@ -438,15 +444,15 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                   </AlertDescription>
                 </Alert>
               ) : statusCounts && statusCounts.total > 0 ? (
-                <Alert variant={statusCounts.error > 0 ? "destructive" : "default"}>
-                  {statusCounts.error > 0 ? (
+                <Alert variant={statusCounts.error + statusCounts.error_data > 0 ? "destructive" : "default"}>
+                  {statusCounts.error + statusCounts.error_data > 0 ? (
                     <AlertTriangle className="h-4 w-4" />
                   ) : (
                     <Check className="h-4 w-4" />
                   )}
                   <AlertTitle>
-                    {statusCounts.error > 0 
-                      ? 'Importación completada con errores' 
+                    {statusCounts.error + statusCounts.error_data > 0
+                      ? 'Importación completada con errores'
                       : 'Importación completada'}
                   </AlertTitle>
                   <AlertDescription>
@@ -470,17 +476,17 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                   </AlertDescription>
                 </Alert>
               )}
-              
+
               {statusCounts && statusCounts.total > 0 && (
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span>Progreso</span>
-                      <span>{statusCounts.success + statusCounts.error} de {statusCounts.total}</span>
+                      <span>{statusCounts.success + statusCounts.error + statusCounts.error_data} de {statusCounts.total}</span>
                     </div>
-                    <Progress value={(statusCounts.success + statusCounts.error) / statusCounts.total * 100} />
+                    <Progress value={(statusCounts.success + statusCounts.error + statusCounts.error_data) / statusCounts.total * 100} />
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-green-50 p-4 rounded-md border border-green-100">
                       <h3 className="text-sm font-medium mb-1">Éxito</h3>
@@ -499,8 +505,8 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                       <p className="text-2xl font-bold text-blue-600">{statusCounts.total}</p>
                     </div>
                   </div>
-                  
-                  {statusCounts.error > 0 && statusPolling === false && (
+
+                  {(statusCounts.error > 0 || statusCounts.error_data > 0) && statusPolling === false && (
                     <Button
                       variant="outline"
                       onClick={() => setSelectedTab('errors')}
@@ -511,19 +517,19 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                   )}
                 </div>
               )}
-              
+
               <div className="flex justify-end space-x-2">
                 {statusPolling ? (
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     onClick={() => setStatusPolling(false)}
                   >
                     <X className="mr-2 h-4 w-4" />
                     Detener actualización
                   </Button>
                 ) : statusCounts && statusCounts.total > 0 && (
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     onClick={pollImportStatus}
                   >
                     <RefreshCw className="mr-2 h-4 w-4" />
@@ -533,12 +539,12 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
               </div>
             </div>
           </TabsContent>
-          
+
           <TabsContent value="errors" className="mt-4">
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-medium">Items con errores ({failedItems.length})</h3>
-                <Button 
+                <Button
                   onClick={() => retryFailedItems(failedItems.map(item => item.item_id))}
                   disabled={isLoading || failedItems.length === 0}
                 >
@@ -550,7 +556,7 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                   Reintentar todos
                 </Button>
               </div>
-              
+
               {failedItems.length > 0 ? (
                 <div className="space-y-2 max-h-96 overflow-y-auto">
                   {failedItems.map(item => (
@@ -562,8 +568,8 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                             {item.processing_message || `Error: ${item.processing_status}`}
                           </p>
                         </div>
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => retryFailedItems([item.item_id])}
                         >
@@ -578,10 +584,10 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
                   No hay items con errores o no se han cargado todavía.
                 </div>
               )}
-              
+
               <div className="flex justify-end">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={() => setSelectedTab('status')}
                 >
                   Volver a estado
@@ -591,14 +597,15 @@ const BulkTrackerImport: React.FC<BulkTrackerImportProps> = ({
           </TabsContent>
         </CardContent>
       </Tabs>
-      
+
       <CardFooter className="flex justify-between border-t pt-6">
         <p className="text-sm text-muted-foreground">
           Puedes importar hasta 5,000 productos a la vez.
         </p>
       </CardFooter>
     </Card>
-  );
+
+  )
 }
 
 export default BulkTrackerImport;

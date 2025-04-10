@@ -57,6 +57,7 @@ export async function syncItemToSheet(itemData: any) {
       itemData.meli_percentage_cashback || '',
       itemData.seller_percentage || '',
       itemData.permalink || '',
+      itemData.sku || '',
     ],
   ];
 

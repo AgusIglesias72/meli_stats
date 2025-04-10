@@ -59,6 +59,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (accessError || !userAccess) {
+      console.error('Access denied to this store:', accessError);
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
     
@@ -77,6 +78,9 @@ export async function POST(request: NextRequest) {
     if (storeError || !storeData) {
       return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
+
+    console.log('storeData', storeData);
+    console.log('userAccess', userAccess);
 
     // Verificar si el token ha expirado
     if (new Date(storeData.token_expiry) < new Date()) {
@@ -223,7 +227,9 @@ async function processBatch(
   );
   
   // Contar éxitos y fallos
-  const successful = results.filter(r => r.status === 'fulfilled').length;
+  const successful = results.filter(
+    r => r.status === 'fulfilled' && (r.value as ProcessingResult).success
+  ).length;
   const failed = batch.length - successful;
   
   console.log(`Batch processed: ${successful} successful, ${failed} failed`);
@@ -248,6 +254,8 @@ async function processItem(
           'Authorization': `Bearer ${storeData.access_token}`
         }
       });
+
+      console.log('itemResponse', itemResponse);  
     
       // Si la respuesta no es exitosa, manejar el error
       if (!itemResponse.ok) {
