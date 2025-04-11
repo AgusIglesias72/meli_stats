@@ -427,6 +427,8 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
       }
 
       const related_data = await related_response.json();
+      console.log('related_data', related_data);
+      console.log('related_data.attributes', related_data.attributes);
       sku = extractSkuFromAttributes(related_data.attributes);  
     }
   
