@@ -295,26 +295,40 @@ export async function POST(request: NextRequest) {
 
         
         // Extraer el SKU de los atributos
-        const sku = extractSkuFromAttributes(item.attributes);
+        let sku = extractSkuFromAttributes(item.attributes);
 
-/*
         if (!sku) {
-          const related_item_id = item.item_relations[0].id;
-          const related_response = await fetch(`https://api.mercadolibre.com/items/${related_item_id}`, {
+          const related_item_id = item?.variations?.[0]?.user_product_id;
+          if (!related_item_id) {
+            console.error(`No se encontró un item relacionado para el item ${item.id}`);
+            return null;
+          }
+          const related_response = await fetch(`https://api.mercadolibre.com/user-products/${related_item_id}`, {
             headers: {
               'Authorization': `Bearer ${accessToken}`
             }
           });
-
+    
           if (!related_response.ok) {
             console.error(`Error fetching related items: ${related_response.status} - ${related_response.statusText}`);
-            continue;
+            return null;
+          }
+    
+          const related_data = await related_response.json();
+    
+          if (!related_data.attributes || !Array.isArray(related_data.attributes)) {
+            return null;
           }
           
-          const related_data = await related_response.json();
-          sku = extractSkuFromAttributes(related_data.attributes);
+          // Buscar el atributo con id "SELLER_SKU"
+          const skuAttribute = related_data.attributes.find((attr: any) => attr.id === "SELLER_SKU");
+          const skuValue = skuAttribute.values[0].name;
+          
+          // Si lo encontramos, devolver su value_name
+          if (skuAttribute && skuAttribute.name) {
+            sku = skuValue;
+          }
         }
-*/
         
         // Obtener costos de envío para el vendedor
         const shippingCosts = await getShippingCosts(item.id, userId, accessToken);
