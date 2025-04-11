@@ -434,10 +434,11 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
       
       // Buscar el atributo con id "SELLER_SKU"
       const skuAttribute = related_data.attributes.find((attr: any) => attr.id === "SELLER_SKU");
+      const skuValue = skuAttribute.values[0].name;
       
       // Si lo encontramos, devolver su value_name
       if (skuAttribute && skuAttribute.name) {
-        sku = skuAttribute.name;
+        sku = skuValue;
       }
 
     }
