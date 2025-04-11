@@ -299,34 +299,33 @@ export async function POST(request: NextRequest) {
 
         if (!sku) {
           const related_item_id = item?.variations?.[0]?.user_product_id;
-          if (!related_item_id) {
-            console.error(`No se encontró un item relacionado para el item ${item.id}`);
-            return null;
-          }
-         
-          const related_response = await fetch(`https://api.mercadolibre.com/user-products/${related_item_id}`, {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`
+          if (related_item_id) {
+            try {
+              const related_response = await fetch(`https://api.mercadolibre.com/user-products/${related_item_id}`, {
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`
+                }
+              });
+        
+              if (related_response.ok) {
+                const related_data = await related_response.json(); 
+        
+                if (related_data.attributes && Array.isArray(related_data.attributes)) {
+                  // Buscar el atributo con id "SELLER_SKU"
+                  const skuAttribute = related_data.attributes.find((attr: any) => attr.id === "SELLER_SKU");
+                  if (skuAttribute && skuAttribute.values && skuAttribute.values[0]) {
+                    sku = skuAttribute.values[0].name;
+                  }
+                }
+              }
+            } catch (error) {
+              console.error(`Error al obtener SKU relacionado para el item ${item.id}:`, error);
+              // No retornamos null, simplemente continuamos con sku null/undefined
             }
-          });
-
-          if (!related_response.ok) {
-            console.error(`Error fetching related items: ${related_response.status} - ${related_response.statusText}`);
-            return null;
+          } else {
+            console.error(`No se encontró un item relacionado para el item ${item.id}`);
+            // No retornamos null, simplemente continuamos con sku null/undefined
           }
-
-          const related_data = await related_response.json(); 
-
-          if (!related_data.attributes || !Array.isArray(related_data.attributes)) {
-            return null;
-          }
-          
-          // Buscar el atributo con id "SELLER_SKU"
-          const skuAttribute = related_data.attributes.find((attr: any) => attr.id === "SELLER_SKU");
-          const skuValue = skuAttribute.values[0].name;
-          
-          sku = skuValue;          
-          
         }
 
         // Obtener costos de envío para el vendedor
