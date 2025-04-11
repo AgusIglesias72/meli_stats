@@ -296,7 +296,7 @@ export async function POST(request: NextRequest) {
         
         // Extraer el SKU de los atributos
         let sku = extractSkuFromAttributes(item.attributes);
-
+/*
         if (!sku) {
           const related_item_id = item?.variations?.[0]?.user_product_id;
           if (!related_item_id) {
@@ -329,7 +329,7 @@ export async function POST(request: NextRequest) {
             sku = skuValue;
           }
         }
-        
+*/
         // Obtener costos de envío para el vendedor
         const shippingCosts = await getShippingCosts(item.id, userId, accessToken);
         
