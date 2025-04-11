@@ -427,9 +427,19 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
       }
 
       const related_data = await related_response.json();
-      console.log('related_data', related_data);
-      console.log('related_data.attributes', related_data.attributes);
-      sku = extractSkuFromAttributes(related_data.attributes);  
+
+      if (!related_data.attributes || !Array.isArray(related_data.attributes)) {
+        return null;
+      }
+      
+      // Buscar el atributo con id "SELLER_SKU"
+      const skuAttribute = related_data.attributes.find((attr: any) => attr.id === "SELLER_SKU");
+      
+      // Si lo encontramos, devolver su value_name
+      if (skuAttribute && skuAttribute.name) {
+        sku = skuAttribute.name;
+      }
+
     }
   
     
