@@ -4,7 +4,7 @@ import { after } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { syncItemToSheet } from '@/lib/syncItemToSheet';
 
-export const runtime = 'edge';
+// export const runtime = 'edge';
 
 // Interfaz para las notificaciones de Mercado Libre
 interface MercadoLibreNotification {

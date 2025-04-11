@@ -230,7 +230,7 @@ export async function POST(request: NextRequest) {
     const newItemIds = allProductIds.filter((id: string) => !existingItemIds.has(id));
     
     if (newItemIds.length === 0) {
-      return Response.json({
+      return NextResponse.json({
         imported: 0,
         failed: 0,
         total: 0,
@@ -392,17 +392,17 @@ export async function POST(request: NextRequest) {
     
     if (insertError) {
       console.error('Error al insertar items:', insertError);
-      return Response.json({ error: insertError.message }, { status: 500 });
+      return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
     
-    return Response.json({
+    return NextResponse.json({
       imported: count,
       failed: failedItems.length,
       total: newItemIds.length
     });
   } catch (error) {
     console.error('Error en auto-import:', error);
-    return Response.json({ error: (error as Error).message }, { status: 500 });
+    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
    
