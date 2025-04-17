@@ -2,10 +2,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
-// Configuración para Edge Runtime
-// export const runtime = 'edge';
-export const preferredRegion = 'auto';
-
 /**
  * GET: Obtiene el estado actual del procesamiento por lotes de items
  */

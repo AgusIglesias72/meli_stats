@@ -2,11 +2,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
-// Configuración para Edge Runtime
-// export const runtime = 'edge';
-export const preferredRegion = 'auto';
-export const maxDuration = 60; // 60 segundos
-
 /**
  * POST: Procesa un lote de items pendientes
  * Este endpoint es para ser llamado por un cron job o manualmente

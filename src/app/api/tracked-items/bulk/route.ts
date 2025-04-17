@@ -3,11 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
-// Configuración para Edge Runtime
-// export const runtime = 'edge';
-export const preferredRegion = 'auto';
-export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // 60 segundos máximo para la función
 
 // Interfaz para el resultado de procesamiento
 interface ProcessingResult {
