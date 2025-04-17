@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
         const sheets = getSheetsClient();
         
         // Verificar si la hoja existe, si no existe la creamos
-        let existingIdsMap = new Map();
+        const existingIdsMap = new Map();
         let lastRow = 1; // Por defecto empezamos después de los encabezados
         
         try {
