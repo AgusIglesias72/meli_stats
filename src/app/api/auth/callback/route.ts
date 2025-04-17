@@ -198,6 +198,7 @@ export async function GET(request: NextRequest) {
           user_id: userId,
           store_id: storeId,
           role: 'owner',
+          
           created_at: new Date().toISOString()
         });
         

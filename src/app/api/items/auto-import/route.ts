@@ -624,8 +624,6 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
     const salePriceData = await salePriceResponse.json();
     const promotionId = salePriceData.metadata?.promotion_id;
     const campaignId = salePriceData.metadata?.campaign_id; 
-
-
     if (!promotionId) {
       return {
         promotion_id: null,
@@ -659,8 +657,11 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
     const promotionType = offerData.type;
 
     // 3. Obtener detalles específicos del item en la promoción
+    // Build the url with the campaignId and the itemId
+    const itemPromotionUrl = `https://api.mercadolibre.com/seller-promotions/promotions/${campaignId}/items?item_id=${itemId}&promotion_type=${promotionType}&app_version=v2`;
+    console.log('itemPromotionUrl', itemPromotionUrl);
     const itemPromotionResponse = await fetch(
-      `https://api.mercadolibre.com/seller-promotions/promotions/${campaignId}/items?item_id=${itemId}&promotion_type=${promotionType}&app_version=v2`,
+      itemPromotionUrl,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`
