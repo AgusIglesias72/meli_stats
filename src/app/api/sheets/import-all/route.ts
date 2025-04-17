@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { getSheetsClient } from '@/lib/googleSheetsClient';
 
-export const maxDuration = 300; // 5 minutos para procesar grandes cantidades de datos
+export const maxDuration = 59; // 5 minutos para procesar grandes cantidades de datos
 
 // Formatea una fecha al formato de Buenos Aires (GMT-3)
 function formatToBuenosAires(datetime: string) {
