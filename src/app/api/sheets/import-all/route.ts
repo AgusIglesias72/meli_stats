@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       .from('items')
       .select('*')
       .eq('seller_id', store_id)
-      .order('last_updated', { ascending: false })
+      .order('last_updated', { ascending: true })
       
 
     if (itemsError) {
