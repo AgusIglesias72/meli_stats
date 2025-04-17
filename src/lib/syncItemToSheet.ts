@@ -24,7 +24,7 @@ function formatToBuenosAires(datetime: string) {
     const get = (type: string) => parts.find(p => p.type === type)?.value.padStart(2, '0') ?? '--';
   
     return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
-  }
+}
 
 export async function syncItemToSheet(itemData: any) {
   const sheets = getSheetsClient();
@@ -62,6 +62,20 @@ export async function syncItemToSheet(itemData: any) {
   ];
 
   try {
+    // Primero, verificar las dimensiones actuales de la hoja para poder expandirla si es necesario
+    const sheetInfo = await sheets.spreadsheets.get({
+      spreadsheetId: SPREADSHEET_ID,
+      ranges: [SHEET_NAME],
+      includeGridData: false,
+    });
+
+    // Obtener información de la hoja
+    const sheet = sheetInfo.data.sheets?.[0];
+    if (!sheet || !sheet.properties) {
+      throw new Error(`No se pudo obtener información de la hoja "${SHEET_NAME}"`);
+    }
+
+    // Verificar si el item ya existe para actualizarlo
     const existing = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: `${SHEET_NAME}!A2:A`,
@@ -70,10 +84,43 @@ export async function syncItemToSheet(itemData: any) {
     const rows = existing.data.values || [];
     const rowIndex = rows.findIndex(([id]) => id === itemData.item_id);
 
-    const range = rowIndex !== -1
-      ? `${SHEET_NAME}!A${rowIndex + 2}`
-      : `${SHEET_NAME}!A${rows.length + 2}`;
+    // Determinar la fila donde se escribirá (existente o nueva)
+    const targetRow = rowIndex !== -1 ? rowIndex + 2 : rows.length + 2;
+    const range = `${SHEET_NAME}!A${targetRow}`;
 
+    // Número actual de filas en la hoja
+    const currentRows = sheet.properties.gridProperties?.rowCount || 0;
+
+    // Comprobar si necesitamos expandir la hoja
+    if (targetRow >= currentRows) {
+      console.log(`Expandiendo hoja: fila objetivo ${targetRow}, filas actuales ${currentRows}`);
+      
+      // Expandir la hoja añadiendo 100 filas más (margen de seguridad)
+      const newRowCount = targetRow + 100;
+      
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          requests: [
+            {
+              updateSheetProperties: {
+                properties: {
+                  sheetId: sheet.properties.sheetId,
+                  gridProperties: {
+                    rowCount: newRowCount,
+                  },
+                },
+                fields: 'gridProperties.rowCount',
+              },
+            },
+          ],
+        },
+      });
+      
+      console.log(`Hoja expandida a ${newRowCount} filas`);
+    }
+
+    // Ahora podemos proceder con seguridad a escribir los datos
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range,
@@ -81,8 +128,9 @@ export async function syncItemToSheet(itemData: any) {
       requestBody: { values },
     });
 
-    console.log(`Google Sheet actualizado para item ${itemData.item_id}`);
+    console.log(`Google Sheet actualizado para item ${itemData.item_id} en la fila ${targetRow}`);
   } catch (err) {
     console.error('Error actualizando Google Sheet:', err);
+    throw err; // Re-lanzar el error para manejarlo en el siguiente nivel
   }
 }
