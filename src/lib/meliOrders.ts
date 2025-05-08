@@ -11,6 +11,58 @@ interface OrderNotification {
 }
 
 /**
+ * Convierte una fecha ISO a formato ISO con zona horaria de Buenos Aires (-3)
+ */
+function convertToBuenosAiresTimezone(dateString: string): string {
+    try {
+      // Parsear la fecha original
+      const date = new Date(dateString);
+      
+      // Verificar si es una fecha válida
+      if (isNaN(date.getTime())) {
+        return dateString;
+      }
+      
+      // Crear formato con timezone explícito para Buenos Aires (-3)
+      // Usamos la API Intl para formatear correctamente con timezone
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        fractionalSecondDigits: 3,
+        hour12: false
+      });
+      
+      // Obtener las partes de la fecha formateada
+      const parts = formatter.formatToParts(date);
+      
+      // Extraer los componentes individuales
+      const getValue = (type: string) => {
+        const part = parts.find(p => p.type === type);
+        return part ? part.value : '';
+      };
+      
+      // Construir string ISO en formato YYYY-MM-DDThh:mm:ss.sss-03:00
+      const year = getValue('year');
+      const month = getValue('month');
+      const day = getValue('day');
+      const hour = getValue('hour');
+      const minute = getValue('minute');
+      const second = getValue('second');
+      const fractionalSecond = getValue('fractionalSecond').padEnd(3, '0');
+      
+      return `${year}-${month}-${day}T${hour}:${minute}:${second}.${fractionalSecond}-03:00`;
+    } catch (error) {
+      console.error('Error converting date to Buenos Aires timezone:', error);
+      return dateString;
+    }
+  }
+
+/**
  * Procesa una notificación de orden de Mercado Libre
  */
 export async function processOrderNotification(notification: OrderNotification): Promise<boolean> {
@@ -137,10 +189,10 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
 
     // Extraer los datos básicos de la orden
     const orderDetails: any = {
-      id: orderData.id,
-      date_created: orderData.date_created,
-      status: orderData.status,
-      pack_id: orderData.pack_id || null,
+        id: orderData.id,
+        date_created: convertToBuenosAiresTimezone(orderData.date_created),
+        status: orderData.status,
+        pack_id: orderData.pack_id || null,
       //items_count: orderData.order_items ? orderData.order_items.length : 0
     };
 
@@ -296,7 +348,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
               }
               
               if (paymentData.money_release_date) {
-                orderDetails.money_release_date = paymentData.money_release_date;
+                orderDetails.money_release_date = convertToBuenosAiresTimezone(paymentData.money_release_date);
               }
               
               // Procesar los detalles de cargos
@@ -414,11 +466,14 @@ async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: s
       .eq('id', orderDetails.id)
       .single();
 
+
+    const now = new Date().toISOString();
+
     // Preparar el objeto completo para inserción/actualización
     const orderData = {
       ...orderDetails,
       store_id: userId,
-      updated_at: new Date().toISOString()
+      updated_at: convertToBuenosAiresTimezone(now)
     };
 
     if (existingOrder) {
@@ -434,7 +489,7 @@ async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: s
       }
     } else {
       // Insertar nueva orden
-      orderData.created_at = new Date().toISOString(); // Solo para nuevas órdenes
+      orderData.created_at = convertToBuenosAiresTimezone(now); // Solo para nuevas órdenes
       
       const { error: insertError } = await supabase
         .from('orders')
