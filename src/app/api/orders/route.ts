@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
     const { startDate, endDate } = getDateRange(dateParam);
     
     // Consultar las tiendas que queremos (IDs específicos)
-    const storeIds = ['405011859', '205076801'];
+    const storeIds = ['1027217359', '205076801'];
 
     // Consultar órdenes directamente de la tabla
     let query = supabase
