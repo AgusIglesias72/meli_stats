@@ -10,7 +10,7 @@ export const maxDuration = 59; // Máximo 59 segundos para procesar grandes cant
 function getDateRange(dateParam: string | null): { startDate: Date, endDate: Date } {
   const now = new Date();
   const endDate = new Date(now);
-  let startDate = new Date(now);
+  const startDate = new Date(now);
 
   // Ajustar a la zona horaria de Argentina (GMT-3)
   const argentinaOffset = -3 * 60; // -3 horas en minutos
