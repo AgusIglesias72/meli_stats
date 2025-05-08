@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { syncItemToSheet } from '@/lib/syncItemToSheet';
+import { processOrderNotification, processShipmentNotification } from '@/lib/meliOrders';
 
 // export const runtime = 'edge';
 
@@ -149,12 +150,41 @@ async function handleNotification(notification: MercadoLibreNotification) {
       return;
     }
 
+    console.log('notification', notification);
+
     // Si el topic no contiene "items", simplemente devolvemos éxito
     // Esto incluye topics como "orders", "shipments", etc.
-    if (!notification.topic.includes('items')) {
-      console.log(`Notificación ignorada para topic: ${notification.topic}`);
-      return;
-    }
+
+// Dentro de la función handleNotification, reemplazar la parte que mencionas:
+if (!notification.topic.includes('items')) {
+  // Si el topic es orders_v2 o shipments, procesar la notificación
+  if (notification.topic === 'orders_v2') {
+    await processOrderNotification(notification)
+      .then(success => {
+        if (success) {
+          console.log(`Notificación de orden procesada con éxito: ${notification.resource}`);
+        } else {
+          console.error(`Error procesando notificación de orden: ${notification.resource}`);
+        }
+      })
+      .catch(err => console.error('Error en procesamiento de orden:', err));
+    return;
+  } else if (notification.topic === 'shipments') {
+    await processShipmentNotification(notification)
+      .then(success => {
+        if (success) {
+          console.log(`Notificación de envío procesada con éxito: ${notification.resource}`);
+        } else {
+          console.error(`Error procesando notificación de envío: ${notification.resource}`);
+        }
+      })
+      .catch(err => console.error('Error en procesamiento de envío:', err));
+    return;
+  }
+  
+  console.log(`Notificación ignorada para topic: ${notification.topic}`);
+  return;
+}
 
     // A partir de aquí sabemos que es un topic relacionado con items (items, items_prices, etc.)
     // Extraer el ID del producto del resource (formato: '/items/MLA1234567')
