@@ -13,11 +13,11 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
   const startDate = new Date(now);
 
   // Ajustar a la zona horaria de Argentina (GMT-3)
-  const argentinaOffset = -3 * 60; // -3 horas en minutos
-  const offsetMinutes = now.getTimezoneOffset() - argentinaOffset;
+  //const argentinaOffset = -3 * 60; // -3 horas en minutos
+  //const offsetMinutes = now.getTimezoneOffset() - argentinaOffset;
   
-  endDate.setMinutes(endDate.getMinutes() + offsetMinutes);
-  startDate.setMinutes(startDate.getMinutes() + offsetMinutes);
+  //endDate.setMinutes(endDate.getMinutes() + offsetMinutes);
+  //startDate.setMinutes(startDate.getMinutes() + offsetMinutes);
   
   // Establecer endDate a las 23:59:59 del día actual
   endDate.setHours(23, 59, 59, 999);
