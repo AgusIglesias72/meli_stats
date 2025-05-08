@@ -141,7 +141,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
       date_created: orderData.date_created,
       status: orderData.status,
       pack_id: orderData.pack_id || null,
-      items_count: orderData.order_items ? orderData.order_items.length : 0
+      //items_count: orderData.order_items ? orderData.order_items.length : 0
     };
 
     // Procesar el primer item si existe
