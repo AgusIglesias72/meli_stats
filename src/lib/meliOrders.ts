@@ -296,7 +296,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
       orderDetails.coupon_amount = 0;
       orderDetails.financing_add_on_fee = 0;
       orderDetails.installments = 0;
-      orderDetails.money_release_date = '';
+      orderDetails.money_release_date = null;
       orderDetails.charge_flat_fee = 0;
       orderDetails.charge_meli_percentage_fee = 0;
       orderDetails.charge_shipping = 0;
