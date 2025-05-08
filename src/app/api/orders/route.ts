@@ -120,14 +120,14 @@ export async function GET(request: NextRequest) {
     // Procesar y formatear órdenes para hacerlas más amigables para Google Sheets
     const formattedOrders = orders?.map(order => {
       return {
-        id: order.id,
+        id: order.id.toString(),
         date_created: formatDate(order.date_created),
         status: order.status,
-        pack_id: order.pack_id,
-        store_id: order.store_id,
+        pack_id: order.pack_id.toString(),
+        store_id: order.store_id.toString(),
         buyer_name: order.buyer_name,
         doc_number: order.doc_number,
-        item_id: order.item_id,
+        item_id: order.item_id.toString(),
         seller_sku: order.seller_sku,
         quantity: order.quantity,
         item_title: order.item_title,
