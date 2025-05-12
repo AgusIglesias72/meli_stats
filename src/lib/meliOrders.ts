@@ -188,6 +188,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
       orderDetails.quantity = firstItem.quantity || 0;
       orderDetails.item_id = firstItem.item ? firstItem.item.id : null;
       orderDetails.seller_sku = firstItem.item ? firstItem.item.seller_sku : null;
+      orderDetails.variation_id = firstItem.item ? firstItem.item.variation_id : null;
       orderDetails.item_title = firstItem.item ? firstItem.item.title : null;
       orderDetails.unit_price = firstItem.unit_price || 0;
       
@@ -208,6 +209,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
       orderDetails.quantity = 0;
       orderDetails.item_id = null;
       orderDetails.seller_sku = null;
+      orderDetails.variation_id = null;
       orderDetails.item_title = null;
       orderDetails.unit_price = 0;
       orderDetails.variation_attributes = '';
