@@ -128,6 +128,7 @@ export async function GET(request: NextRequest) {
         buyer_name: order.buyer_name,
         doc_number: order.doc_number,
         item_id: `${order.item_id}`,
+        variation_id: `${order.variation_id}`,
         seller_sku: order.seller_sku,
         quantity: order.quantity,
         item_title: order.item_title,
