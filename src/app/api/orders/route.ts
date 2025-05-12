@@ -57,7 +57,15 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
 export async function GET(request: NextRequest) {
   try {
      // Verificar clave de API para seguridad
-    
+     const authHeader = request.headers.get('Authorization');
+     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+     }
+     
+     const apiKey = authHeader.split(' ')[1];
+     if (apiKey !== process.env.NEXT_PUBLIC_API_SECRET_KEY) {
+       return NextResponse.json({ error: 'Invalid API key' }, { status: 401 });
+     }
     // Obtener parámetros de la URL
     const searchParams = request.nextUrl.searchParams;
     const dateParam = searchParams.get('date_range'); // 'last_date', 'last_week', 'month_to_date'

@@ -11,56 +11,41 @@ interface OrderNotification {
 }
 
 /**
- * Convierte una fecha ISO a formato ISO con zona horaria de Buenos Aires (-3)
+ * Convierte un ISO string (p.ej. "2025-05-11T22:07:27.000-04:00")
+ * a un ISO string en hora de Buenos Aires, SIN offset.
  */
-function convertToBuenosAiresTimezone(dateString: string): string {
-    try {
-      // Parsear la fecha original
-      const date = new Date(dateString);
-      
-      // Verificar si es una fecha válida
-      if (isNaN(date.getTime())) {
-        return dateString;
-      }
-      
-      // Crear formato con timezone explícito para Buenos Aires (-3)
-      // Usamos la API Intl para formatear correctamente con timezone
-      const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/Argentina/Buenos_Aires',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        fractionalSecondDigits: 3,
-        hour12: false
-      });
-      
-      // Obtener las partes de la fecha formateada
-      const parts = formatter.formatToParts(date);
-      
-      // Extraer los componentes individuales
-      const getValue = (type: string) => {
-        const part = parts.find(p => p.type === type);
-        return part ? part.value : '';
-      };
-      
-      // Construir string ISO en formato YYYY-MM-DDThh:mm:ss.sss-03:00
-      const year = getValue('year');
-      const month = getValue('month');
-      const day = getValue('day');
-      const hour = getValue('hour');
-      const minute = getValue('minute');
-      const second = getValue('second');
-      const fractionalSecond = getValue('fractionalSecond').padEnd(3, '0');
-      
-      return `${year}-${month}-${day}T${hour}:${minute}:${second}.${fractionalSecond}-03:00`;
-    } catch (error) {
-      console.error('Error converting date to Buenos Aires timezone:', error);
+function convertToBuenosAiresLocal(dateString: string): string {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      console.warn('Fecha inválida:', dateString);
       return dateString;
     }
+  
+    // “en-CA” da formato YYYY-MM-DD HH:mm:ss.sss
+    const formatted = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      year:   'numeric',
+      month:  '2-digit',
+      day:    '2-digit',
+      hour:   '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      // para incluir .SSS
+      fractionalSecondDigits: 3,
+      hour12: false
+    }).format(date);
+  
+    // -> "2025-05-11 23:07:27.000"
+    // simplemente sustituimos el espacio por “T”
+    return formatted.replace(' ', 'T');
   }
+  
+  // --- Ejemplo de uso ---
+  console.log(
+    convertToBuenosAiresLocal("2025-05-11T22:07:27.000-04:00")
+  );
+  // → "2025-05-11T23:07:27.000"
+  
 
 /**
  * Procesa una notificación de orden de Mercado Libre
@@ -190,7 +175,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
     // Extraer los datos básicos de la orden
     const orderDetails: any = {
         id: orderData.id,
-        date_created: convertToBuenosAiresTimezone(orderData.date_created),
+        date_created: convertToBuenosAiresLocal(orderData.date_created),
         status: orderData.status,
         pack_id: orderData.pack_id || null,
       //items_count: orderData.order_items ? orderData.order_items.length : 0
@@ -348,7 +333,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
               }
               
               if (paymentData.money_release_date) {
-                orderDetails.money_release_date = convertToBuenosAiresTimezone(paymentData.money_release_date);
+                orderDetails.money_release_date = convertToBuenosAiresLocal(paymentData.money_release_date);
               }
               
               // Procesar los detalles de cargos
@@ -473,7 +458,7 @@ async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: s
     const orderData = {
       ...orderDetails,
       store_id: userId,
-      updated_at: convertToBuenosAiresTimezone(now)
+      updated_at: convertToBuenosAiresLocal(now)
     };
 
     if (existingOrder) {
@@ -489,7 +474,7 @@ async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: s
       }
     } else {
       // Insertar nueva orden
-      orderData.created_at = convertToBuenosAiresTimezone(now); // Solo para nuevas órdenes
+      orderData.created_at = convertToBuenosAiresLocal(now); // Solo para nuevas órdenes
       
       const { error: insertError } = await supabase
         .from('orders')
