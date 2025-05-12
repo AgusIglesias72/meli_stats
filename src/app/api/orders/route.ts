@@ -34,6 +34,12 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
       // Última semana
       startDate.setDate(startDate.getDate() - 7);
       startDate.setHours(0, 0, 0, 0);
+
+      // endDate debería ser el último domingo
+      const lastSunday = new Date(startDate);
+      lastSunday.setDate(lastSunday.getDate() + (7 - lastSunday.getDay()));
+      endDate.setDate(lastSunday.getDate());
+      endDate.setHours(23, 59, 59, 999);
       break;
       
     case 'month_to_date':
