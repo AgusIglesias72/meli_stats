@@ -23,19 +23,24 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
       endDate.setDate(endDate.getDate() - 1);
       break;
       
-    case 'last_week':
-    // Esto debería ser el último lunes, para hacer de lunes a domingo
-    const lastMonday = new Date(startDate);
-    lastMonday.setDate(lastMonday.getDate() - (lastMonday.getDay() - 1));
-    startDate.setDate(lastMonday.getDate());
-    startDate.setHours(0, 0, 0, 0);
-
-      // endDate debería ser el último domingo
-      const lastSunday = new Date(startDate);
-      lastSunday.setDate(lastSunday.getDate() + (7 - lastSunday.getDay()));
-      endDate.setDate(lastSunday.getDate());
-      endDate.setHours(23, 59, 59, 999);
-      break;
+      case 'last_week':
+        // Encontrar el lunes de esta semana
+        const today = now.getDay(); // 0 = domingo, 1 = lunes, etc.
+        const daysFromMonday = today === 0 ? 6 : today - 1; // Si es domingo (0), retroceder 6 días
+        
+        // Ir al lunes de esta semana
+        const thisMonday = new Date(now);
+        thisMonday.setDate(now.getDate() - daysFromMonday);
+        thisMonday.setHours(0, 0, 0, 0);
+        
+        // El lunes de la semana pasada es 7 días antes
+        startDate.setDate(thisMonday.getDate() - 7);
+        startDate.setHours(0, 0, 0, 0);
+        
+        // El domingo de la semana pasada es 6 días después del lunes pasado
+        endDate.setDate(startDate.getDate() + 6);
+        endDate.setHours(23, 59, 59, 999);
+        break;
       
     case 'month_to_date':
       // Desde el inicio del mes hasta hoy
