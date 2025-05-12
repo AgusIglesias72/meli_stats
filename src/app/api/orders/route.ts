@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
     const formattedOrders = orders?.map(order => {
       return {
         id: `${order.id}`,
-        date_created: formatDate(order.date_created),
+        date_created: order.date_created,
         status: order.status,
         pack_id: `${order.pack_id}`,
         store_id: `${order.store_id}`,
