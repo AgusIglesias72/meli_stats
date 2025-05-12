@@ -8,48 +8,42 @@ export const maxDuration = 59; // Máximo 59 segundos para procesar grandes cant
  * Función auxiliar para crear objetos de fecha según el parámetro de consulta
  */
 function getDateRange(dateParam: string | null): { startDate: Date, endDate: Date } {
-  const now = new Date();
-  const endDate = new Date(now);
-  const startDate = new Date(now);
-
-  // Ajustar a la zona horaria de Argentina (GMT-3)
-  //const argentinaOffset = -3 * 60; // -3 horas en minutos
-  //const offsetMinutes = now.getTimezoneOffset() - argentinaOffset;
+    const now = new Date();
+    // 1) Crear copias para start/end en hora local
+    const startLocal = new Date(now);
+    const endLocal   = new Date(now);
   
-  //endDate.setMinutes(endDate.getMinutes() + offsetMinutes);
-  //startDate.setMinutes(startDate.getMinutes() + offsetMinutes);
+    // Establecer endLocal a las 23:59:59.999 hora local
+    endLocal.setHours(23, 59, 59, 999);
   
-  // Establecer endDate a las 23:59:59 del día actual
-  endDate.setHours(23, 59, 59, 999);
-
-  switch (dateParam) {
-    case 'last_date':
-      // Último día (ayer)
-      startDate.setDate(startDate.getDate() - 1);
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setDate(endDate.getDate() - 1);
-      break;
-      
-    case 'last_week':
-      // Última semana
-      startDate.setDate(startDate.getDate() - 7);
-      startDate.setHours(0, 0, 0, 0);
-      break;
-      
-    case 'month_to_date':
-      // Desde el inicio del mes hasta hoy
-      startDate.setDate(1);
-      startDate.setHours(0, 0, 0, 0);
-      break;
-      
-    default:
-      // Por defecto, últimos 30 días
-      startDate.setDate(startDate.getDate() - 30);
-      startDate.setHours(0, 0, 0, 0);
+    // Ajustar startLocal según el parámetro
+    switch (dateParam) {
+      case 'last_date':
+        startLocal.setDate(startLocal.getDate() - 1);
+        startLocal.setHours(0, 0, 0, 0);
+        endLocal.setDate(endLocal.getDate() - 1);
+        break;
+      case 'last_week':
+        startLocal.setDate(startLocal.getDate() - 7);
+        startLocal.setHours(0, 0, 0, 0);
+        break;
+      case 'month_to_date':
+        startLocal.setDate(1);
+        startLocal.setHours(0, 0, 0, 0);
+        break;
+      default:
+        startLocal.setDate(startLocal.getDate() - 30);
+        startLocal.setHours(0, 0, 0, 0);
+    }
+  
+    // 2) Convertir horario local → UTC para que cuadre con los timestamps de la BD
+    const offsetMinutes = startLocal.getTimezoneOffset(); 
+    const startUTC = new Date(startLocal.getTime() + offsetMinutes * 60_000);
+    const endUTC   = new Date(endLocal.getTime()   + offsetMinutes * 60_000);
+  
+    return { startDate: startUTC, endDate: endUTC };
   }
-
-  return { startDate, endDate };
-}
+  
 
 /**
  * GET: Obtiene órdenes para una tienda específica en un rango de fechas
