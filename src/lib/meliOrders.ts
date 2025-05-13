@@ -158,8 +158,8 @@ export async function processShipmentNotification(notification: OrderNotificatio
  */
 export async function processPaymentNotification(notification: OrderNotification): Promise<boolean> {
   try {
-    // Extraer el ID del pago del resource (formato: '/payments/123456789')
-    const paymentIdMatch = notification.resource.match(/\/payments\/(\d+)/);
+    // Extraer el ID del pago del resource (formato: '/payments/123456789' o collection/123456789)
+    const paymentIdMatch = notification.resource.match(/\/payments\/(\d+)|collection\/(\d+)/);
     
     if (!paymentIdMatch) {
       console.error(`Formato de resource inválido para payments: ${notification.resource}`);
