@@ -159,8 +159,10 @@ export async function processShipmentNotification(notification: OrderNotificatio
 export async function processPaymentNotification(notification: OrderNotification): Promise<boolean> {
   try {
     // Extraer el ID del pago del resource (formato: '/payments/123456789' o collection/123456789)
-    const paymentIdMatch = notification.resource.match(/\/payments\/(\d+)|collection\/(\d+)/);
+    const paymentIdMatch = notification.resource.match(/\/collections\/(\d+)/);
     
+
+
     if (!paymentIdMatch) {
       console.error(`Formato de resource inválido para payments: ${notification.resource}`);
       return false;
@@ -247,6 +249,10 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
         date_created: convertToBuenosAiresLocal(orderData.date_created),
         status: orderData.status,
         pack_id: orderData.pack_id || null,
+        shipping_amount: 0,
+        net_received_amount: 0,
+
+
       //items_count: orderData.order_items ? orderData.order_items.length : 0
     };
 
@@ -321,6 +327,12 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
           orderDetails.shipping_mode = shippingData.mode || '';
           orderDetails.shipping_logistic_type = shippingData.logistic_type || '';
           orderDetails.shipping_status = shippingData.status || '';
+
+          if (shippingData.logistic_type === "self_service") {
+            orderDetails.shipping_amount += shippingData.base_cost || 0;
+            orderDetails.net_received_amount += shippingData.base_cost || 0;
+
+          }
         } else {
           console.error(`Error al obtener información de envío para orden ${orderId}: ${shippingResponse.status}`);
           orderDetails.shipping_id = orderData.shipping.id;
@@ -347,8 +359,6 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
       // Inicializar variables para acumular datos de pagos
       orderDetails.total_paid_amount = 0;
       orderDetails.transaction_amount = 0;
-      orderDetails.net_received_amount = 0;
-      orderDetails.shipping_amount = 0;
       orderDetails.coupon_amount = 0;
       orderDetails.financing_add_on_fee = 0;
       orderDetails.installments = 0;
@@ -391,7 +401,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
                 orderDetails.net_received_amount += paymentData.transaction_details.net_received_amount;
               }
               
-              if (paymentData.shipping_amount) {
+              if (paymentData.shipping_amount && paymentData.shipping_amount > 0) {
                 orderDetails.shipping_amount += paymentData.shipping_amount;
               }
               
@@ -423,7 +433,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
                     orderDetails.charge_flat_fee += amount;
                   } else if (charge.name === 'meli_percentage_fee') {
                     orderDetails.charge_meli_percentage_fee += amount;
-                  } else if (charge.name === 'financing_add_on_fee') {
+                  } else if (charge.name === 'financing_add_on_fee' || charge.name === 'financing_fee') {
                     orderDetails.financing_add_on_fee += amount;
                   } else if (charge.type === 'shipping') {
                     orderDetails.charge_shipping += amount;
@@ -446,6 +456,8 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
           }
         }
       }
+
+      
       
       // Guardar string con los tipos de todos los cargos
       orderDetails.charge_types = chargeTypes.join(', ');
