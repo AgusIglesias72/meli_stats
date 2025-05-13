@@ -344,7 +344,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
     const promotionsData = await promotionsArray.json();
 
     // Iterar el array de promociones y obtener el que tenga el type "PRE_NEGOTIATED" si es que existe. Sino vamos a usar el promotionId y campaignId que viene en el salePriceResponse
-    const preNegotiatedPromotion = promotionsData.results.find((promotion: any) => promotion.type === "PRE_NEGOTIATED");
+    const preNegotiatedPromotion = promotionsData.find((promotion: any) => promotion.type === "PRE_NEGOTIATED");
 
     if (preNegotiatedPromotion) {
       const promotionId = preNegotiatedPromotion.id;
