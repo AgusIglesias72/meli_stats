@@ -190,7 +190,7 @@ async function handleNotification(notification: MercadoLibreNotification) {
             }
           })
       }
-      
+
 
       console.log(`Notificación ignorada para topic: ${notification.topic}`);
       return;
@@ -326,11 +326,13 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
       };
     }
 
-    const salePriceData = await salePriceResponse.json();
-    const promotionId = salePriceData.metadata?.promotion_id;
-    const campaignId = salePriceData.metadata?.campaign_id;
+    const promotionsArray = await fetch(`https://api.mercadolibre.com/seller-promotions/items/${itemId}?app_version=v2`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
 
-    if (!promotionId) {
+    if (!promotionsArray.ok) {
       return {
         promotion_id: null,
         campaign_type: null,
@@ -339,60 +341,99 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
       };
     }
 
-    // 2. Obtener información de la oferta
-    const offerResponse = await fetch(
-      `https://api.mercadolibre.com/seller-promotions/offers/${promotionId}?app_version=v2`,
-      {
+    const promotionsData = await promotionsArray.json();
+
+    // Iterar el array de promociones y obtener el que tenga el type "PRE_NEGOTIATED" si es que existe. Sino vamos a usar el promotionId y campaignId que viene en el salePriceResponse
+    const preNegotiatedPromotion = promotionsData.results.find((promotion: any) => promotion.type === "PRE_NEGOTIATED");
+
+    if (preNegotiatedPromotion) {
+      const promotionId = preNegotiatedPromotion.id;
+
+      const negotiatedPromotion = await fetch(`https://api.mercadolibre.com/seller-promotions/promotions/${promotionId}/items?item_id=${itemId}&promotion_type=${preNegotiatedPromotion.type}&app_version=v2`, {
         headers: {
           'Authorization': `Bearer ${accessToken}`
         }
-      }
-    );
+      });
 
-    if (!offerResponse.ok) {
-      console.error(`Error fetching offer info: ${offerResponse.status} - ${offerResponse.statusText}`);
+      if (!negotiatedPromotion.ok) {
+        return {
+          promotion_id: null,
+          campaign_type: null,
+          meli_percentage_cashback: null,
+          seller_percentage: null
+        };
+      }
+
+      const negotiatedPromotionData = await negotiatedPromotion.json();
+      const negotiatedPromotionItem = negotiatedPromotionData.results[0];
+
       return {
         promotion_id: promotionId,
-        campaign_type: null,
-        meli_percentage_cashback: null,
-        seller_percentage: null
+        campaign_type: negotiatedPromotionItem.type,
+        meli_percentage_cashback: negotiatedPromotionItem.meli_percentage,
+        seller_percentage: negotiatedPromotionItem.seller_percentage
       };
-    }
+    } else if (!preNegotiatedPromotion) {
 
-    const offerData = await offerResponse.json();
-    const promotionType = offerData.type;
+      const salePriceData = await salePriceResponse.json();
+      const promotionId = salePriceData.metadata?.promotion_id;
+      const campaignId = salePriceData.metadata?.campaign_id;
 
-
-    // 3. Obtener detalles específicos del item en la promoción
-    const itemPromotionResponse = await fetch(
-      `https://api.mercadolibre.com/seller-promotions/promotions/${campaignId}/items?item_id=${itemId}&promotion_type=${promotionType}&app_version=v2`,
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
+      // 2. Obtener información de la oferta
+      const offerResponse = await fetch(
+        `https://api.mercadolibre.com/seller-promotions/offers/${promotionId}?app_version=v2`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
         }
-      }
-    );
+      );
 
-    if (!itemPromotionResponse.ok) {
-      console.error(`Error fetching item promotion: ${itemPromotionResponse.status} - ${itemPromotionResponse.statusText}`);
+      if (!offerResponse.ok) {
+        console.error(`Error fetching offer info: ${offerResponse.status} - ${offerResponse.statusText}`);
+        return {
+          promotion_id: promotionId,
+          campaign_type: null,
+          meli_percentage_cashback: null,
+          seller_percentage: null
+        };
+      }
+
+      const offerData = await offerResponse.json();
+      const promotionType = offerData.type;
+
+      // 3. Obtener detalles específicos del item en la promoción
+      const itemPromotionResponse = await fetch(
+        `https://api.mercadolibre.com/seller-promotions/promotions/${campaignId}/items?item_id=${itemId}&promotion_type=${promotionType}&app_version=v2`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        }
+      );
+
+      if (!itemPromotionResponse.ok) {
+        console.error(`Error fetching item promotion: ${itemPromotionResponse.status} - ${itemPromotionResponse.statusText}`);
+        return {
+          promotion_id: promotionId,
+          campaign_type: promotionType,
+          meli_percentage_cashback: null,
+          seller_percentage: null
+        };
+      }
+
+      const itemPromotionData = await itemPromotionResponse.json();
+
+      const itemPromotion = itemPromotionData.results[0];
+
       return {
         promotion_id: promotionId,
         campaign_type: promotionType,
-        meli_percentage_cashback: null,
-        seller_percentage: null
-      };
+        meli_percentage_cashback: itemPromotion.meli_percentage || null,
+        seller_percentage: itemPromotion.seller_percentage || null
+      }
     }
 
-    const itemPromotionData = await itemPromotionResponse.json();
-
-    const itemPromotion = itemPromotionData.results[0];
-
-    return {
-      promotion_id: promotionId,
-      campaign_type: promotionType,
-      meli_percentage_cashback: itemPromotion.meli_percentage || null,
-      seller_percentage: itemPromotion.seller_percentage || null
-    };
   } catch (error) {
     console.error(`Error fetching campaign info for item ${itemId}:`, error);
     return {
