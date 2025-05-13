@@ -47,6 +47,17 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
       startDate.setDate(1);
       startDate.setHours(0, 0, 0, 0);
       break;
+    
+    case 'today':
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      break;
+    
+    case 'last_30_days':
+      startDate.setDate(startDate.getDate() - 30);
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      break;
       
     default:
       // Por defecto, últimos 30 días
