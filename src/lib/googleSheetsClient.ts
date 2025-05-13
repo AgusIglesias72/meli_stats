@@ -15,3 +15,18 @@ export function getSheetsClient() {
 
   return google.sheets({ version: 'v4', auth });
 }
+
+export function getSheetsClientBackup() {
+  const credentials = {
+    client_email: process.env.GOOGLE_CLIENT_EMAIL_BACKUP,
+    private_key: process.env.GOOGLE_PRIVATE_KEY_BACKUP?.replace(/\\n/g, '\n'),
+  };
+
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes,
+  });
+
+  return google.sheets({ version: 'v4', auth });
+}
+
