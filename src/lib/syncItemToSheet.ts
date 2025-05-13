@@ -1,6 +1,6 @@
 import { getSheetsClient, getSheetsClientBackup } from './googleSheetsClient';
 
-const ITEMS_SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
+const ITEMS_SPREADSHEET_ID = process.env.ITEMS_SPREADSHEET_ID;
 const SHEET_NAME = 'Items';
 
 function formatToBuenosAires(datetime: string) {
