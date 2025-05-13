@@ -154,6 +154,75 @@ export async function processShipmentNotification(notification: OrderNotificatio
 }
 
 /**
+ * Procesa una notificación de pago de Mercado Libre
+ */
+export async function processPaymentNotification(notification: OrderNotification): Promise<boolean> {
+  try {
+    // Extraer el ID del pago del resource (formato: '/payments/123456789')
+    const paymentIdMatch = notification.resource.match(/\/payments\/(\d+)/);
+    
+    if (!paymentIdMatch) {
+      console.error(`Formato de resource inválido para payments: ${notification.resource}`);
+      return false;
+    }
+
+    const paymentId = paymentIdMatch[1];
+    const userId = notification.user_id.toString();
+
+    // Obtener token de acceso para el usuario
+    const supabase = createServerSupabaseClient();
+
+    const { data: store, error: storeError } = await supabase
+      .from('stores')
+      .select('id, access_token, token_expiry')
+      .eq('ml_user_id', userId)
+      .single();
+
+    if (storeError || !store) {
+      console.error(`No se encontró la tienda para el usuario ${userId}:`, storeError);
+      return false;
+    }
+
+    // Verificar si el token ha expirado
+    if (new Date(store.token_expiry) < new Date()) {
+      console.error(`Token expirado para la tienda ${store.id}`);
+      return false;
+    }
+
+    // Obtener los detalles del pago
+    const paymentDetails = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+      headers: {
+        'Authorization': `Bearer ${store.access_token}`
+      }
+    });
+
+    if (!paymentDetails.ok) {
+      console.error(`Error al obtener información del pago ${paymentId}: ${paymentDetails.status}`);
+      return false;
+    }
+
+    const paymentData = await paymentDetails.json();
+
+    // Con el pago, obtener el order.id para eliminar la orden y volver a crearla
+    // Usemos processOrderNotification para eliminar y crear la orden
+    const success = await processOrderNotification({
+      ...notification,
+      resource: `/orders/${paymentData.order.id}`
+    });
+
+    if (!success) {
+      console.error(`Error al procesar la notificación de pago ${paymentId}:`, paymentData);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error procesando notificación de pago:', error);
+    return false;
+  }
+} 
+
+/**
  * Obtiene los detalles completos de una orden
  */
 async function fetchOrderDetails(orderId: string, userId: string, accessToken: string): Promise<any> {

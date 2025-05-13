@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { syncItemToSheet } from '@/lib/syncItemToSheet';
-import { processOrderNotification, processShipmentNotification } from '@/lib/meliOrders';
+import { processOrderNotification, processPaymentNotification, processShipmentNotification } from '@/lib/meliOrders';
 
 // export const runtime = 'edge';
 
@@ -30,7 +30,7 @@ function determineInstallmentsQuantity(listingTypeId: string, tags: string[]): n
     if (tags.includes("cuota-simple-paid-by-buyer")) return 1; // Vendedor tiene habilitado Cuota Simple
     return 1; // No quiere agregar cuotas
   }
-  
+
   if (listingTypeId === "gold_pro") {
     // Por defecto 6 cuotas para gold_pro
     if (tags.includes("3x_campaign")) return 3; // 3 cuotas al mismo precio que publicaste
@@ -41,7 +41,7 @@ function determineInstallmentsQuantity(listingTypeId: string, tags: string[]): n
     if (tags.includes("12x_campaign")) return 12; // 12 cuotas al mismo precio que publicaste
     return 6; // Valor por defecto para gold_pro
   }
-  
+
   return 1; // Valor por defecto para otros tipos de listing
 }
 
@@ -60,15 +60,15 @@ function determineFreeShipping(shippingData: any): boolean {
  */
 async function getFeeDetails(
   accessToken: string,
-  price: number, 
-  categoryId: string, 
-  tags: string[], 
+  price: number,
+  categoryId: string,
+  tags: string[],
   listingTypeId: string
 ): Promise<any> {
   try {
     const tagsString = tags.join(',');
     const siteId = 'MLA'; // Asumiendo que es Argentina
-    
+
     const response = await fetch(
       `https://api.mercadolibre.com/sites/${siteId}/listing_prices?price=${price}&category_id=${categoryId}&tags=${tagsString}&listing_type_id=${listingTypeId}`,
       {
@@ -90,7 +90,7 @@ async function getFeeDetails(
     }
 
     const data = await response.json();
-    
+
     return {
       meli_percentage_fee: data.sale_fee_details?.meli_percentage_fee || 0,
       percentage_fee: data.sale_fee_details?.percentage_fee || 0,
@@ -155,36 +155,46 @@ async function handleNotification(notification: MercadoLibreNotification) {
     // Si el topic no contiene "items", simplemente devolvemos éxito
     // Esto incluye topics como "orders", "shipments", etc.
 
-// Dentro de la función handleNotification, reemplazar la parte que mencionas:
-if (!notification.topic.includes('items')) {
-  // Si el topic es orders_v2 o shipments, procesar la notificación
-  if (notification.topic === 'orders_v2') {
-    await processOrderNotification(notification)
-      .then(success => {
-        if (success) {
-          console.log(`Notificación de orden procesada con éxito: ${notification.resource}`);
-        } else {
-          console.error(`Error procesando notificación de orden: ${notification.resource}`);
-        }
-      })
-      .catch(err => console.error('Error en procesamiento de orden:', err));
-    return;
-  } else if (notification.topic === 'shipments') {
-    await processShipmentNotification(notification)
-      .then(success => {
-        if (success) {
-          console.log(`Notificación de envío procesada con éxito: ${notification.resource}`);
-        } else {
-          console.error(`Error procesando notificación de envío: ${notification.resource}`);
-        }
-      })
-      .catch(err => console.error('Error en procesamiento de envío:', err));
-    return;
-  }
-  
-  console.log(`Notificación ignorada para topic: ${notification.topic}`);
-  return;
-}
+    // Dentro de la función handleNotification, reemplazar la parte que mencionas:
+    if (!notification.topic.includes('items')) {
+      // Si el topic es orders_v2 o shipments, procesar la notificación
+      if (notification.topic === 'orders_v2') {
+        await processOrderNotification(notification)
+          .then(success => {
+            if (success) {
+              console.log(`Notificación de orden procesada con éxito: ${notification.resource}`);
+            } else {
+              console.error(`Error procesando notificación de orden: ${notification.resource}`);
+            }
+          })
+          .catch(err => console.error('Error en procesamiento de orden:', err));
+        return;
+      } else if (notification.topic === 'shipments') {
+        await processShipmentNotification(notification)
+          .then(success => {
+            if (success) {
+              console.log(`Notificación de envío procesada con éxito: ${notification.resource}`);
+            } else {
+              console.error(`Error procesando notificación de envío: ${notification.resource}`);
+            }
+          })
+          .catch(err => console.error('Error en procesamiento de envío:', err));
+        return;
+      }
+
+      else if (notification.topic === 'payments') {
+        await processPaymentNotification(notification)
+          .then(success => {
+            if (success) {
+              console.log(`Notificación de pago procesada con éxito: ${notification.resource}`);
+            }
+          })
+      }
+      
+
+      console.log(`Notificación ignorada para topic: ${notification.topic}`);
+      return;
+    }
 
     // A partir de aquí sabemos que es un topic relacionado con items (items, items_prices, etc.)
     // Extraer el ID del producto del resource (formato: '/items/MLA1234567')
@@ -237,8 +247,6 @@ async function processItemUpdate(user_id: string, itemId: string) {
     // Actualizar el item en nuestra base de datos
     await updateItemInDatabase(itemId, itemData, store.id);
 
-    console.log('sku', itemData.sku);
-
     // Actualizar la hoja de cálculo de Google Sheets
     try {
       await fetch(`${process.env.SELF_BASE_URL}/api/internal/sync-sheet`, {
@@ -280,7 +288,7 @@ async function getShippingCosts(itemId: string, userId: string, accessToken: str
     }
 
     const data = await response.json();
-    
+
     // Extraer los datos que nos interesan
     return {
       shipping_list_cost: data.coverage?.all_country?.list_cost || null,
@@ -378,7 +386,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
     const itemPromotionData = await itemPromotionResponse.json();
 
     const itemPromotion = itemPromotionData.results[0];
-    
+
     return {
       promotion_id: promotionId,
       campaign_type: promotionType,
@@ -420,7 +428,7 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
     }
 
     const data = await response.json();
-    
+
     // Intentar obtener los precios de venta
     let salePrices = { amount: null, regular_amount: null };
     if (responseSalePrices.ok) {
@@ -429,7 +437,7 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
 
     // Determinar free_shipping
     const freeShipping = determineFreeShipping(data.shipping || {});
-    
+
     // Determinar installments_quantity
     const installmentsQuantity = determineInstallmentsQuantity(
       data.listing_type_id,
@@ -461,19 +469,19 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
       if (!related_data.attributes || !Array.isArray(related_data.attributes)) {
         return null;
       }
-      
+
       // Buscar el atributo con id "SELLER_SKU"
       const skuAttribute = related_data.attributes.find((attr: any) => attr.id === "SELLER_SKU");
       const skuValue = skuAttribute.values[0].name;
-      
+
       // Si lo encontramos, devolver su value_name
       if (skuAttribute && skuAttribute.name) {
         sku = skuValue;
       }
 
     }
-  
-    
+
+
     // Obtener detalles de tarifas
     const price = salePrices.amount || data.price;
     const feeDetails = await getFeeDetails(
@@ -483,10 +491,10 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
       data.tags || [],
       data.listing_type_id
     );
-    
+
     // Obtener costos de envío
     const shippingCosts = await getShippingCosts(itemId, data.seller_id, accessToken);
-    
+
     // Obtener información de campaña/promoción
     const campaignInfo = await getCampaignInfo(itemId, accessToken);
 
@@ -599,14 +607,14 @@ function extractSkuFromAttributes(attributes: any[]): string | null {
   if (!attributes || !Array.isArray(attributes)) {
     return null;
   }
-  
+
   // Buscar el atributo con id "SELLER_SKU"
   const skuAttribute = attributes.find(attr => attr.id === "SELLER_SKU");
-  
+
   // Si lo encontramos, devolver su value_name
   if (skuAttribute && skuAttribute.value_name) {
     return skuAttribute.value_name;
   }
-  
+
   return null;
 }
