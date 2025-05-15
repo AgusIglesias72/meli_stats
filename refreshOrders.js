@@ -8,8 +8,8 @@ const API_KEY     = 'YOUR_API_KEY';
 const WEBHOOK_URL = 'https://meli-stats.vercel.app/api/meli/webhooks';
 
 const STORES = [
-  //{ name: 'Green Deco', id: '205076801' },
-  { name: 'Harte',      id: '1027217359' }
+  { name: 'Green Deco', id: '205076801' },
+  //{ name: 'Harte',      id: '1027217359' }
 ];
 
 // Fecha desde la cual relanzamos todas las órdenes

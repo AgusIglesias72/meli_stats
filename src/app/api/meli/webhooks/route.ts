@@ -2,10 +2,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
-import { syncItemToSheet } from '@/lib/syncItemToSheet';
 import { processOrderNotification, processPaymentNotification, processShipmentNotification } from '@/lib/meliOrders';
 
-// export const runtime = 'edge';
+export const runtime = 'edge';
 
 // Interfaz para las notificaciones de Mercado Libre
 interface MercadoLibreNotification {
@@ -111,8 +110,6 @@ async function getFeeDetails(
 }
 
 export async function POST(request: NextRequest) {
-  const start = performance.now();
-
   try {
     // Extraer la notificación del cuerpo de la solicitud
     const notification: MercadoLibreNotification = await request.json();
@@ -125,9 +122,6 @@ export async function POST(request: NextRequest) {
 
     // Procesar en segundo plano usando `after()` (recomendado para Next.js App Router)
     after(async () => handleNotification(notification));
-
-    const end = performance.now();
-    console.log(`Respuesta enviada en ${end - start} ms`);
 
     return response;
   } catch (error) {
@@ -423,7 +417,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
 
       const itemPromotionData = await itemPromotionResponse.json();
 
-      const itemPromotion = itemPromotionData.results[0];
+      const itemPromotion = itemPromotionData?.results?.[0];
 
       return {
         promotion_id: promotionId,
