@@ -422,8 +422,8 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
       return {
         promotion_id: promotionId,
         campaign_type: promotionType,
-        meli_percentage_cashback: itemPromotion.meli_percentage || null,
-        seller_percentage: itemPromotion.seller_percentage || null
+        meli_percentage_cashback: itemPromotion?.meli_percentage || null,
+        seller_percentage: itemPromotion?.seller_percentage || null
       }
     }
 
