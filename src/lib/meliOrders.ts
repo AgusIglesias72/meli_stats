@@ -39,14 +39,6 @@ function convertToBuenosAiresLocal(dateString: string): string {
     // simplemente sustituimos el espacio por “T”
     return formatted.replace(' ', 'T');
   }
-  
-  // --- Ejemplo de uso ---
-  console.log(
-    convertToBuenosAiresLocal("2025-05-11T22:07:27.000-04:00")
-  );
-  // → "2025-05-11T23:07:27.000"
-  
-
 /**
  * Procesa una notificación de orden de Mercado Libre
  */
