@@ -251,8 +251,6 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
         pack_id: orderData.pack_id || null,
         shipping_amount: 0,
         net_received_amount: 0,
-
-
       //items_count: orderData.order_items ? orderData.order_items.length : 0
     };
 
@@ -331,9 +329,11 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
           if (shippingData.logistic_type === "self_service") {
             orderDetails.shipping_amount += shippingData.base_cost || 0;
             orderDetails.net_received_amount += shippingData.base_cost || 0;
-
           }
-        } else {
+/*
+          const shipmentCost = await fetch(`https://api.mercadolibre.com/shipments/${shippingId}/costs`, {
+        */
+          } else {
           console.error(`Error al obtener información de envío para orden ${orderId}: ${shippingResponse.status}`);
           orderDetails.shipping_id = orderData.shipping.id;
           orderDetails.shipping_mode = '';
@@ -361,6 +361,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
       orderDetails.transaction_amount = 0;
       orderDetails.coupon_amount = 0;
       orderDetails.financing_add_on_fee = 0;
+      orderDetails.financing_fee = 0;
       orderDetails.installments = 0;
       orderDetails.money_release_date = null;
       orderDetails.charge_flat_fee = 0;
@@ -433,8 +434,10 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
                     orderDetails.charge_flat_fee += amount;
                   } else if (charge.name === 'meli_percentage_fee') {
                     orderDetails.charge_meli_percentage_fee += amount;
-                  } else if (charge.name === 'financing_add_on_fee' || charge.name === 'financing_fee') {
+                  } else if (charge.name === 'financing_add_on_fee') {
                     orderDetails.financing_add_on_fee += amount;
+                  } else if (charge.name === 'financing_fee') {
+                    orderDetails.financing_fee += amount;
                   } else if (charge.type === 'shipping') {
                     orderDetails.charge_shipping += amount;
                   } else if (charge.name === 'tax_withholding_collector-debitos_creditos') {
@@ -469,6 +472,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
       orderDetails.shipping_amount = 0;
       orderDetails.coupon_amount = 0;
       orderDetails.financing_add_on_fee = 0;
+      orderDetails.financing_fee = 0;
       orderDetails.installments = 0;
       orderDetails.money_release_date = '';
       orderDetails.charge_flat_fee = 0;

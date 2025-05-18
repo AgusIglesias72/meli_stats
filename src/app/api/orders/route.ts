@@ -296,6 +296,7 @@ function formatOrders(orders: any[]) {
       charge_tax_withholding_debitos_creditos: order.charge_tax_withholding_debitos_creditos,
       charge_other_taxes: order.charge_other_taxes,
       financing_add_on_fee: order.financing_add_on_fee,
+      financing_fee: order.financing_fee,
       charge_uncategorized: order.charge_uncategorized,
       installments: order.installments,
       money_release_date: formatDate(order.money_release_date),
