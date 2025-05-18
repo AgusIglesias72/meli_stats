@@ -216,8 +216,8 @@ async function getAllPaginatedOrders(
     }
 
     // Si hemos llegado al límite de tiempo o tamaño de respuesta, detenemos
-    if (allOrders.length >= 10000) {  // Límite para evitar respuestas demasiado grandes
-      console.warn(`Reached limit of 10000 orders, stopping pagination at page ${page} of ${totalPages}`);
+    if (allOrders.length >= 20000) {  // Límite para evitar respuestas demasiado grandes
+      console.warn(`Reached limit of 20000 orders, stopping pagination at page ${page} of ${totalPages}`);
       break;
     }
   }
