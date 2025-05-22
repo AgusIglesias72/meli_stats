@@ -303,7 +303,8 @@ function formatOrders(orders: any[]) {
       charge_types: order.charge_types,
       created_at: formatDate(order.created_at),
       updated_at: formatDate(order.updated_at),
-      buffer_date: formatDate(order.buffer_date)
+      // Al buffer date este hay que agregarle 12hs
+      buffer_date: order.buffer_date ? new Date(order.buffer_date).getTime() + 12 * 60 * 60 * 1000 : null
     };
   });
 }
