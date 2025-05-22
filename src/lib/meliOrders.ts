@@ -314,6 +314,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
         if (shippingResponse.ok) {
           const shippingData = await shippingResponse.json();
           orderDetails.shipping_id = shippingData.id;
+          orderDetails.buffer_date = shippingData.shipping_option.buffering.date || null;
           orderDetails.shipping_mode = shippingData.mode || '';
           orderDetails.shipping_logistic_type = shippingData.logistic_type || '';
           orderDetails.shipping_status = shippingData.status || '';
@@ -331,6 +332,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
           orderDetails.shipping_mode = '';
           orderDetails.shipping_logistic_type = '';
           orderDetails.shipping_status = '';
+          orderDetails.buffer_date = null;
         }
       } catch (shippingError) {
         console.error(`Error procesando información de envío para orden ${orderId}:`, shippingError);
@@ -338,12 +340,14 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
         orderDetails.shipping_mode = '';
         orderDetails.shipping_logistic_type = '';
         orderDetails.shipping_status = '';
+        orderDetails.buffer_date = null;
       }
     } else {
       orderDetails.shipping_id = null;
       orderDetails.shipping_mode = '';
       orderDetails.shipping_logistic_type = '';
       orderDetails.shipping_status = '';
+      orderDetails.buffer_date = null;
     }
 
     // 4. Procesar información de pagos (MercadoPago)
@@ -532,7 +536,7 @@ async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: s
 
 
     const now = new Date().toISOString();
-
+    
     // Preparar el objeto completo para inserción/actualización
     const orderData = {
       ...orderDetails,
@@ -587,6 +591,7 @@ async function updateOrderShippingInfo(orderId: string | number, shipmentDetails
         shipping_mode: shipmentDetails.mode || '',
         shipping_logistic_type: shipmentDetails.logistic_type || '',
         shipping_status: shipmentDetails.status || '',
+        buffer_date: shipmentDetails.shipping_option.buffering.date || null,
         updated_at: new Date().toISOString()
       })
       .eq('id', orderId);

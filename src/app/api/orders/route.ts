@@ -302,7 +302,8 @@ function formatOrders(orders: any[]) {
       money_release_date: formatDate(order.money_release_date),
       charge_types: order.charge_types,
       created_at: formatDate(order.created_at),
-      updated_at: formatDate(order.updated_at)
+      updated_at: formatDate(order.updated_at),
+      buffer_date: formatDate(order.buffer_date)
     };
   });
 }

@@ -13,8 +13,8 @@ const API_URL     = 'http://localhost:3000/api/stores/token';
  const WEBHOOK_URL = 'http://localhost:3000/api/meli/webhooks';
 
 const STORES = [
-  //{ name: 'Green Deco', id: '205076801' },
-  { name: 'Harte',      id: '1027217359' }
+  { name: 'Green Deco', id: '205076801' },
+  //{ name: 'Harte',      id: '1027217359' }
 ];
 
 // Fecha desde la cual relanzamos todas las órdenes
