@@ -4,6 +4,7 @@ import { after } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { processOrderNotification, processPaymentNotification, processShipmentNotification } from '@/lib/meliOrders';
 
+export const maxDuration = 20; // Máximo 10 segundos para procesar grandes cantidades de datos
 export const runtime = 'edge';
 
 // Interfaz para las notificaciones de Mercado Libre

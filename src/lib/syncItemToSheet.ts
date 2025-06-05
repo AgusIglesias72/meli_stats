@@ -61,6 +61,19 @@ function itemToRowValues(itemData: any): string[] {
   ];
 }
 
+export async function syncItemToSheet(itemData: any) {
+  // TODO: Revertir temporalmente para diagnosticar
+  console.log('Sync called for:', itemData.item_id);
+  return { success: true, message: 'Temporarily disabled' };
+}
+
+export async function syncItemToSheetBackup(itemData: any) {
+  // TODO: Revertir temporalmente para diagnosticar  
+  console.log('Backup sync called for:', itemData.item_id);
+  return { success: true, message: 'Temporarily disabled' };
+}
+
+
 /**
  * Compara dos filas para detectar cambios (excluyendo el timestamp)
  */
@@ -77,7 +90,7 @@ function hasChanges(existingRow: string[], newRow: string[]): boolean {
   }
   return false;
 }
-
+/*
 export async function syncItemToSheet(itemData: any) {
   const sheets = getSheetsClient();
   const newRowValues = itemToRowValues(itemData);
@@ -302,3 +315,5 @@ export async function syncItemToSheetBackup(itemData: any) {
     };
   }
 }
+  */
+
