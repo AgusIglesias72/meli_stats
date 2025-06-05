@@ -387,7 +387,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
 
       const salePriceData = await salePriceResponse.json();
 
-      if (!salePriceData.metadata) {
+      if (!salePriceData.metadata.promotion_id) {
         return {
           promotion_id: null,
           campaign_type: null,
@@ -395,7 +395,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
           seller_percentage: null
         };
       }
-      
+
       const promotionId = salePriceData.metadata?.promotion_id;
       const campaignId = salePriceData.metadata?.campaign_id;
 
