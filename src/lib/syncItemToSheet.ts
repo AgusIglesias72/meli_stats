@@ -281,7 +281,9 @@ export async function syncItemToSheet(itemData: any) {
 }
 
 export async function syncItemToSheetBackup(itemData: any) {
-  const sheets = getSheetsClientBackup();
+  //const sheets = getSheetsClientBackup();
+  const sheets: sheets_v4.Sheets = getSheetsClientBackup();
+
   const newRowValues = itemToRowValues(itemData);
 
   try {

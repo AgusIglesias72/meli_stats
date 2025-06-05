@@ -239,25 +239,39 @@ async function processItemUpdate(user_id: string, itemId: string) {
       return;
     }
 
-    // Actualizar el item en nuestra base de datos
-    await updateItemInDatabase(itemId, itemData, store.id);
+    // ✅ NUEVA LÓGICA: Comparar con datos existentes
+    const updateResult = await updateItemInDatabaseWithComparison(itemId, itemData, store.id);
 
-    // Actualizar la hoja de cálculo de Google Sheets
-    try {
-      await fetch(`${process.env.SELF_BASE_URL}/api/internal/sync-sheet`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(itemData)
-      });
-    } catch (err) {
-      console.error('Error sincronizando con Google Sheets:', err);
+    // ✅ Solo llamar a sync-sheet si hay cambios
+    if (updateResult.hasChanges) {
+      console.log(`📊 Item ${itemId} tiene cambios, sincronizando con Google Sheets...`);
+      
+      try {
+        await fetch(`${process.env.SELF_BASE_URL}/api/internal/sync-sheet`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...itemData,
+            changeType: updateResult.changeType, // 'created' | 'updated'
+            changedFields: updateResult.changedFields // array de campos que cambiaron
+          })
+        });
+        
+        console.log(`✅ Item ${itemId} sincronizado con Sheets`);
+      } catch (err) {
+        console.error('❌ Error sincronizando con Google Sheets:', err);
+      }
+    } else {
+      console.log(`⏭️ Item ${itemId} sin cambios, omitiendo sync con Sheets`);
     }
-    console.log(`Item ${itemId} actualizado correctamente`);
+
+    console.log(`✅ Item ${itemId} procesado correctamente`);
   } catch (error) {
-    console.error(`Error procesando actualización del item ${itemId}:`, error);
+    console.error(`❌ Error procesando actualización del item ${itemId}:`, error);
     throw error;
   }
 }
+
 
 /**
  * Obtiene los costos de envío para el vendedor
@@ -582,58 +596,180 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
   }
 }
 
+
 /**
- * Actualiza la información del item en la base de datos
+ * Actualiza el item en la base de datos con comparación inteligente
+ * Retorna información sobre si hubo cambios
  */
-async function updateItemInDatabase(itemId: string, itemData: any, storeId: string) {
+async function updateItemInDatabaseWithComparison(
+  itemId: string, 
+  newItemData: any, 
+  storeId: string
+): Promise<{
+  hasChanges: boolean;
+  changeType: 'created' | 'updated' | 'no-change';
+  changedFields: string[];
+  existingItem?: any;
+}> {
   try {
     const supabase = createServerSupabaseClient();
 
-    // Buscar si el item ya existe en la base de datos
+    // ✅ Buscar si el item ya existe
     const { data: existingItem, error: findError } = await supabase
       .from('items')
-      .select('id')
+      .select('*') // Seleccionar todos los campos para comparar
       .eq('item_id', itemId)
       .eq('store_id', storeId)
       .maybeSingle();
 
     if (findError) {
       console.error(`Error buscando item ${itemId}:`, findError);
-      return;
+      throw findError;
     }
 
     // Preparar datos completos para actualización
     const updateData = {
-      ...itemData,
+      ...newItemData,
       store_id: storeId,
       last_updated: new Date().toISOString()
     };
 
-    if (existingItem) {
-      // Actualizar item existente
-      const { error: updateError } = await supabase
-        .from('items')
-        .update(updateData)
-        .eq('id', existingItem.id);
-
-      if (updateError) {
-        console.error(`Error actualizando item ${itemId}:`, updateError);
-      }
-
-    } else {
-      // Crear nuevo item
+    if (!existingItem) {
+      // ✅ Item nuevo - crear
       const { error: insertError } = await supabase
         .from('items')
         .insert(updateData);
 
       if (insertError) {
         console.error(`Error insertando item ${itemId}:`, insertError);
+        throw insertError;
       }
+
+      return {
+        hasChanges: true,
+        changeType: 'created',
+        changedFields: ['all'] // Todos los campos son nuevos
+      };
     }
+
+    // ✅ Item existe - comparar campos importantes
+    const changedFields = compareItemData(existingItem, updateData);
+
+    if (changedFields.length === 0) {
+      // No hay cambios reales
+      return {
+        hasChanges: false,
+        changeType: 'no-change',
+        changedFields: [],
+        existingItem
+      };
+    }
+
+    // ✅ Hay cambios - actualizar en DB
+    const { error: updateError } = await supabase
+      .from('items')
+      .update(updateData)
+      .eq('item_id', itemId)
+      .eq('store_id', storeId);
+
+    if (updateError) {
+      console.error(`Error actualizando item ${itemId}:`, updateError);
+      throw updateError;
+    }
+
+    return {
+      hasChanges: true,
+      changeType: 'updated',
+      changedFields,
+      existingItem
+    };
+
   } catch (error) {
-    console.error(`Error en la actualización del item ${itemId} en la base de datos:`, error);
+    console.error(`Error en updateItemInDatabaseWithComparison para ${itemId}:`, error);
     throw error;
   }
+}
+
+/**
+ * Compara dos objetos de item y retorna los campos que cambiaron
+ * Solo compara campos importantes que ameritan actualizar Sheets
+ */
+function compareItemData(existingItem: any, newItem: any): string[] {
+  const changedFields: string[] = [];
+  
+  // ✅ Campos importantes que ameritan sync con Sheets
+  const importantFields = [
+    'title',
+    'price',
+    'base_price',
+    'available_quantity',
+    'status',
+    'amount',           // precio promocional
+    'regular_amount',   // precio regular
+    'listing_type_id',
+    'free_shipping',
+    'installments_quantity',
+    'sale_fee_amount',
+    'percentage_fee',
+    'meli_percentage_fee',
+    'shipping_list_cost',
+    'promotion_id',
+    'campaign_type',
+    'meli_percentage_cashback',
+    'seller_percentage',
+    'sku'
+  ];
+
+  for (const field of importantFields) {
+    const existingValue = existingItem[field];
+    const newValue = newItem[field];
+
+    // ✅ Comparación inteligente (maneja null/undefined, números, strings)
+    if (!areValuesEqual(existingValue, newValue)) {
+      changedFields.push(field);
+      console.log(`📝 Campo cambiado ${field}: ${existingValue} → ${newValue}`);
+    }
+  }
+
+  return changedFields;
+}
+
+/**
+ * Compara dos valores de manera inteligente
+ * Maneja casos edge como null vs undefined, números vs strings, etc.
+ */
+function areValuesEqual(value1: any, value2: any): boolean {
+  // Normalizar null/undefined
+  const norm1 = value1 === null || value1 === undefined ? null : value1;
+  const norm2 = value2 === null || value2 === undefined ? null : value2;
+
+  // Si ambos son null/undefined
+  if (norm1 === null && norm2 === null) {
+    return true;
+  }
+
+  // Si uno es null y el otro no
+  if (norm1 === null || norm2 === null) {
+    return false;
+  }
+
+  // Comparación de números (maneja string vs number)
+  if (typeof norm1 === 'number' || typeof norm2 === 'number') {
+    return Number(norm1) === Number(norm2);
+  }
+
+  // Comparación de booleans
+  if (typeof norm1 === 'boolean' || typeof norm2 === 'boolean') {
+    return Boolean(norm1) === Boolean(norm2);
+  }
+
+  // Comparación de strings (trim para evitar espacios)
+  if (typeof norm1 === 'string' || typeof norm2 === 'string') {
+    return String(norm1).trim() === String(norm2).trim();
+  }
+
+  // Comparación directa para otros tipos
+  return norm1 === norm2;
 }
 
 
