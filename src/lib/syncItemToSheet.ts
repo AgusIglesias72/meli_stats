@@ -140,13 +140,13 @@ function normalizeMoneyValue(value: string): string {
 }
 
 
-// OPCIÓN 1: Solo valuesResponse (MÁS SIMPLE)
-export async function syncItemToSheetSimple(itemData: any) {
+
+export async function syncItemToSheet(itemData: any) {
   const sheets = getSheetsClient();
   const newRowValues = itemToRowValues(itemData);
 
   try {
-    // UNA SOLA llamada
+    // UNA SOLA llamada inicial
     const valuesResponse = await sheets.spreadsheets.values.get({
       spreadsheetId: ITEMS_SPREADSHEET_ID,
       range: `${SHEET_NAME}!A:AA`,
@@ -174,7 +174,8 @@ export async function syncItemToSheetSimple(itemData: any) {
         return { 
           success: true, 
           message: `No changes detected for item ${itemData.item_id}`,
-          action: 'skipped'
+          action: 'skipped',
+          apiCalls: 1 // Solo 1 llamada
         };
       }
       
@@ -182,10 +183,7 @@ export async function syncItemToSheetSimple(itemData: any) {
       action = 'update';
     }
 
-    // PROBLEMA: ¿Qué pasa si targetRow > filas disponibles en la hoja?
-    // Sin sheetResponse, NO SABEMOS si necesitamos expandir la hoja
-    
-    // Solución 1: Intentar escribir y manejar error
+    // Intentar escribir directamente
     try {
       await sheets.spreadsheets.values.update({
         spreadsheetId: ITEMS_SPREADSHEET_ID,
@@ -193,131 +191,223 @@ export async function syncItemToSheetSimple(itemData: any) {
         valueInputOption: 'RAW',
         requestBody: { values: [newRowValues] },
       });
-    } catch (error) {
-      // Si falla por falta de filas, expandir y reintentar
-      if (error.message?.includes('exceeds grid limits')) {
-        console.log(`Expandiendo hoja para fila ${targetRow}`);
+
+      console.log(`✅ Item ${itemData.item_id} ${action}ed in row ${targetRow}`);
+      return { 
+        success: true, 
+        message: `Item ${action}ed successfully`, 
+        action,
+        apiCalls: 2 // get + update
+      };
+
+    } catch (updateError: any) {
+      // Si falla por límites de hoja, expandir y reintentar
+      if (updateError.message?.includes('exceeds grid limits') || 
+          updateError.message?.includes('Unable to parse range') ||
+          updateError.status === 400) {
         
-        // Ahora SÍ necesitamos sheetResponse para expandir
-        const sheetInfo = await sheets.spreadsheets.get({
-          spreadsheetId: ITEMS_SPREADSHEET_ID,
-          ranges: [SHEET_NAME],
-          includeGridData: false,
-        });
+        console.log(`📏 Sheet expansion needed for row ${targetRow}, expanding...`);
         
-        const sheet = sheetInfo.data.sheets?.[0];
-        await sheets.spreadsheets.batchUpdate({
-          spreadsheetId: ITEMS_SPREADSHEET_ID,
-          requestBody: {
-            requests: [{
-              updateSheetProperties: {
-                properties: {
-                  sheetId: sheet.properties.sheetId,
-                  gridProperties: { rowCount: targetRow + 100 },
+        try {
+          // Obtener metadatos de la hoja
+          const sheetInfo = await sheets.spreadsheets.get({
+            spreadsheetId: ITEMS_SPREADSHEET_ID,
+            ranges: [SHEET_NAME],
+            includeGridData: false,
+          });
+          
+          const sheet = sheetInfo.data.sheets?.[0];
+          if (!sheet?.properties) {
+            throw new Error('Could not get sheet properties');
+          }
+          
+          // Expandir la hoja
+          const newRowCount = targetRow + 100;
+          await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: ITEMS_SPREADSHEET_ID,
+            requestBody: {
+              requests: [{
+                updateSheetProperties: {
+                  properties: {
+                    sheetId: sheet.properties.sheetId,
+                    gridProperties: { rowCount: newRowCount },
+                  },
+                  fields: 'gridProperties.rowCount',
                 },
-                fields: 'gridProperties.rowCount',
-              },
-            }],
-          },
-        });
-        
-        // Reintentar escritura
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: ITEMS_SPREADSHEET_ID,
-          range: `${SHEET_NAME}!A${targetRow}`,
-          valueInputOption: 'RAW',
-          requestBody: { values: [newRowValues] },
-        });
+              }],
+            },
+          });
+          
+          console.log(`📏 Sheet expanded to ${newRowCount} rows`);
+          
+          // Reintentar escritura
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: ITEMS_SPREADSHEET_ID,
+            range: `${SHEET_NAME}!A${targetRow}`,
+            valueInputOption: 'RAW',
+            requestBody: { values: [newRowValues] },
+          });
+
+          console.log(`✅ Item ${itemData.item_id} ${action}ed in row ${targetRow} (after expansion)`);
+          return { 
+            success: true, 
+            message: `Item ${action}ed successfully after sheet expansion`, 
+            action,
+            apiCalls: 4 // get + failed_update + get_sheet + batchUpdate + update
+          };
+          
+        } catch (expansionError) {
+          console.error(`❌ Failed to expand sheet:`, expansionError);
+          throw expansionError;
+        }
       } else {
-        throw error;
+        // Error no relacionado con límites de hoja
+        throw updateError;
       }
     }
-
-    console.log(`✅ Item ${itemData.item_id} ${action}ed in row ${targetRow}`);
-    return { success: true, message: `Item ${action}ed successfully`, action };
     
   } catch (err) {
     console.error(`❌ Error syncing item ${itemData.item_id}:`, err);
-    return { success: false, message: `Error: ${err}` };
+    return { 
+      success: false, 
+      message: `Error: ${err}`,
+      apiCalls: 'unknown'
+    };
   }
 }
 
-// OPCIÓN 2: Enfoque híbrido (RECOMENDADO)
-export async function syncItemToSheetHybrid(itemData: any) {
-  const sheets = getSheetsClient();
+export async function syncItemToSheetBackup(itemData: any) {
+  const sheets = getSheetsClientBackup();
   const newRowValues = itemToRowValues(itemData);
 
   try {
-    // Primera llamada: Solo obtener datos
+    // UNA SOLA llamada inicial
     const valuesResponse = await sheets.spreadsheets.values.get({
       spreadsheetId: ITEMS_SPREADSHEET_ID,
       range: `${SHEET_NAME}!A:AA`,
     });
 
     const allData = valuesResponse.data.values || [];
+    
+    // Buscar si el item existe
     const dataRows = allData.length > 0 && allData[0][0] === 'ID' ? allData.slice(1) : allData;
     const existingRowIndex = dataRows.findIndex(row => row[0] === itemData.item_id);
     
-    // Si existe y no hay cambios, terminar aquí (1 sola llamada API)
-    if (existingRowIndex !== -1) {
+    let targetRow: number;
+    let action: 'insert' | 'update' | 'skip';
+    
+    if (existingRowIndex === -1) {
+      // Item no existe, insertar al final
+      targetRow = allData.length + 1;
+      action = 'insert';
+    } else {
+      // Item existe, verificar cambios
       const existingRow = dataRows[existingRowIndex];
+      
       if (!hasChanges(existingRow, newRowValues)) {
         console.log(`⏭️ No changes detected for item ${itemData.item_id}, skipping update`);
         return { 
           success: true, 
-          message: `No changes detected`,
-          action: 'skipped'
+          message: `No changes detected for item ${itemData.item_id}`,
+          action: 'skipped',
+          apiCalls: 1 // Solo 1 llamada
         };
+      }
+      
+      targetRow = existingRowIndex + (allData.length > 0 && allData[0][0] === 'ID' ? 2 : 1);
+      action = 'update';
+    }
+
+    // Intentar escribir directamente
+    try {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: ITEMS_SPREADSHEET_ID,
+        range: `${SHEET_NAME}!A${targetRow}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [newRowValues] },
+      });
+
+      console.log(`✅ Item ${itemData.item_id} ${action}ed in row ${targetRow}`);
+      return { 
+        success: true, 
+        message: `Item ${action}ed successfully`, 
+        action,
+        apiCalls: 2 // get + update
+      };
+
+    } catch (updateError: any) {
+      // Si falla por límites de hoja, expandir y reintentar
+      if (updateError.message?.includes('exceeds grid limits') || 
+          updateError.message?.includes('Unable to parse range') ||
+          updateError.status === 400) {
+        
+        console.log(`📏 Sheet expansion needed for row ${targetRow}, expanding...`);
+        
+        try {
+          // Obtener metadatos de la hoja
+          const sheetInfo = await sheets.spreadsheets.get({
+            spreadsheetId: ITEMS_SPREADSHEET_ID,
+            ranges: [SHEET_NAME],
+            includeGridData: false,
+          });
+          
+          const sheet = sheetInfo.data.sheets?.[0];
+          if (!sheet?.properties) {
+            throw new Error('Could not get sheet properties');
+          }
+          
+          // Expandir la hoja
+          const newRowCount = targetRow + 100;
+          await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: ITEMS_SPREADSHEET_ID,
+            requestBody: {
+              requests: [{
+                updateSheetProperties: {
+                  properties: {
+                    sheetId: sheet.properties.sheetId,
+                    gridProperties: { rowCount: newRowCount },
+                  },
+                  fields: 'gridProperties.rowCount',
+                },
+              }],
+            },
+          });
+          
+          console.log(`📏 Sheet expanded to ${newRowCount} rows`);
+          
+          // Reintentar escritura
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: ITEMS_SPREADSHEET_ID,
+            range: `${SHEET_NAME}!A${targetRow}`,
+            valueInputOption: 'RAW',
+            requestBody: { values: [newRowValues] },
+          });
+
+          console.log(`✅ Item ${itemData.item_id} ${action}ed in row ${targetRow} (after expansion)`);
+          return { 
+            success: true, 
+            message: `Item ${action}ed successfully after sheet expansion`, 
+            action,
+            apiCalls: 4 // get + failed_update + get_sheet + batchUpdate + update
+          };
+          
+        } catch (expansionError) {
+          console.error(`❌ Failed to expand sheet:`, expansionError);
+          throw expansionError;
+        }
+      } else {
+        // Error no relacionado con límites de hoja
+        throw updateError;
       }
     }
     
-    // Solo si necesitamos escribir, obtener metadatos de la hoja
-    const targetRow = existingRowIndex !== -1 
-      ? existingRowIndex + (allData[0][0] === 'ID' ? 2 : 1)
-      : allData.length + 1;
-    
-    // Segunda llamada: Solo si necesitamos expandir
-    const sheetResponse = await sheets.spreadsheets.get({
-      spreadsheetId: ITEMS_SPREADSHEET_ID,
-      ranges: [SHEET_NAME],
-      includeGridData: false,
-    });
-    
-    const sheet = sheetResponse.data.sheets?.[0];
-    const currentRows = sheet?.properties?.gridProperties?.rowCount || 0;
-    
-    // Expandir si es necesario
-    if (targetRow > currentRows) {
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId: ITEMS_SPREADSHEET_ID,
-        requestBody: {
-          requests: [{
-            updateSheetProperties: {
-              properties: {
-                sheetId: sheet.properties.sheetId,
-                gridProperties: { rowCount: targetRow + 100 },
-              },
-              fields: 'gridProperties.rowCount',
-            },
-          }],
-        },
-      });
-    }
-    
-    // Escribir datos
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: ITEMS_SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A${targetRow}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [newRowValues] },
-    });
-
-    const action = existingRowIndex !== -1 ? 'update' : 'insert';
-    console.log(`✅ Item ${itemData.item_id} ${action}ed in row ${targetRow}`);
-    return { success: true, message: `Item ${action}ed successfully`, action };
-    
   } catch (err) {
     console.error(`❌ Error syncing item ${itemData.item_id}:`, err);
-    return { success: false, message: `Error: ${err}` };
+    return { 
+      success: false, 
+      message: `Error: ${err}`,
+      apiCalls: 'unknown'
+    };
   }
 }
+
