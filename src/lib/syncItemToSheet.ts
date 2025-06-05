@@ -89,7 +89,7 @@ function hasChanges(existingRow: string[], newRow: string[]): boolean {
 function normalizeForComparison(value: any): string {
   if (value === null || value === undefined) return '';
   
-  let stringValue = String(value).trim();
+  const stringValue = String(value).trim();
   
   // Si es un número o string que representa dinero, normalizarlo
   if (isMoneyValue(stringValue)) {
