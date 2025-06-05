@@ -386,6 +386,16 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
     } else if (!preNegotiatedPromotion) {
 
       const salePriceData = await salePriceResponse.json();
+
+      if (!salePriceData.metadata) {
+        return {
+          promotion_id: null,
+          campaign_type: null,
+          meli_percentage_cashback: null,
+          seller_percentage: null
+        };
+      }
+      
       const promotionId = salePriceData.metadata?.promotion_id;
       const campaignId = salePriceData.metadata?.campaign_id;
 
