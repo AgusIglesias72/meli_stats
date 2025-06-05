@@ -83,11 +83,11 @@ export async function syncItemToSheet(itemData: any) {
   const newRowValues = itemToRowValues(itemData);
 
   try {
-    // UNA SOLA llamada que obtiene todo lo necesario
+    // UNA SOLA llamada paralela - sin batchGet
     const [valuesResponse, sheetResponse] = await Promise.all([
-      sheets.spreadsheets.values.batchGet({
+      sheets.spreadsheets.values.get({
         spreadsheetId: ITEMS_SPREADSHEET_ID,
-        ranges: [`${SHEET_NAME}!A:AA`],  // Todos los datos para buscar y comparar
+        range: `${SHEET_NAME}!A:AA`,  // Todos los datos
       }),
       sheets.spreadsheets.get({
         spreadsheetId: ITEMS_SPREADSHEET_ID,
@@ -96,7 +96,7 @@ export async function syncItemToSheet(itemData: any) {
       })
     ]);
 
-    const allData = valuesResponse.data.valueRanges?.[0]?.values || [];
+    const allData = valuesResponse.data.values || [];
     const sheetInfo = sheetResponse.data.sheets?.[0];
     
     if (!sheetInfo || !sheetInfo.properties) {
@@ -196,11 +196,11 @@ export async function syncItemToSheetBackup(itemData: any) {
   const newRowValues = itemToRowValues(itemData);
 
   try {
-    // UNA SOLA llamada que obtiene todo lo necesario
+    // UNA SOLA llamada paralela - sin batchGet
     const [valuesResponse, sheetResponse] = await Promise.all([
-      sheets.spreadsheets.values.batchGet({
+      sheets.spreadsheets.values.get({
         spreadsheetId: ITEMS_SPREADSHEET_ID,
-        ranges: [`${SHEET_NAME}!A:AA`],  // Todos los datos para buscar y comparar
+        range: `${SHEET_NAME}!A:AA`,  // Todos los datos
       }),
       sheets.spreadsheets.get({
         spreadsheetId: ITEMS_SPREADSHEET_ID,
@@ -209,7 +209,7 @@ export async function syncItemToSheetBackup(itemData: any) {
       })
     ]);
 
-    const allData = valuesResponse.data.valueRanges?.[0]?.values || [];
+    const allData = valuesResponse.data.values || [];
     const sheetInfo = sheetResponse.data.sheets?.[0];
     
     if (!sheetInfo || !sheetInfo.properties) {
