@@ -2,7 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
-export const maxDuration = 59; // Máximo 59 segundos para procesar grandes cantidades de datos
+export const maxDuration = 10; // Máximo 59 segundos para procesar grandes cantidades de datos
+export const runtime = 'edge';
 
 /**
  * Función auxiliar para crear objetos de fecha según el parámetro de consulta
@@ -14,7 +15,6 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
   
   // Establecer endDate a las 23:59:59 del día actual
   endDate.setHours(23, 59, 59, 999);
-
   switch (dateParam) {
     case 'last_date':
       // Último día (ayer)
@@ -65,6 +65,8 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
       startDate.setHours(0, 0, 0, 0);
   }
 
+  console.log('startDate', startDate);
+  console.log('endDate', endDate);
   return { startDate, endDate };
 }
 
