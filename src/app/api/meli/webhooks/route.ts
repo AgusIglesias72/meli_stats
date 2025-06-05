@@ -210,13 +210,11 @@ async function handleNotification(notification: MercadoLibreNotification) {
 }
 
 /**
- * Procesa la actualización de un item
- * @param user_id ID del usuario de Mercado Libre
- * @param itemId ID del item a actualizar
+ * Procesa la actualización de un item con comparación inteligente
+ * Solo llama a sync-sheet si hay cambios reales
  */
 async function processItemUpdate(user_id: string, itemId: string) {
   try {
-    // Inicializar cliente de Supabase
     const supabase = createServerSupabaseClient();
 
     // Buscar la tienda del usuario para obtener el access_token
@@ -232,28 +230,29 @@ async function processItemUpdate(user_id: string, itemId: string) {
     }
 
     // Obtener los datos actualizados del item desde la API de Mercado Libre
-    const itemData = await fetchItemFromMeli(itemId, store.access_token);
+    const newItemData = await fetchItemFromMeli(itemId, store.access_token);
 
-    if (!itemData) {
+    if (!newItemData) {
       console.error(`No se pudo obtener información del item ${itemId}`);
       return;
     }
 
     // ✅ NUEVA LÓGICA: Comparar con datos existentes
-    const updateResult = await updateItemInDatabaseWithComparison(itemId, itemData, store.id);
+    const updateResult = await updateItemInDatabaseWithComparison(itemId, newItemData, store.id);
 
-    // ✅ Solo llamar a sync-sheet si hay cambios
-    if (updateResult.hasChanges) {
-      console.log(`📊 Item ${itemId} tiene cambios, sincronizando con Google Sheets...`);
+    // ✅ Solo llamar a sync-sheet si hay cambios relevantes para Sheets
+    if (updateResult.hasSheetsChanges) {
+      console.log(`📊 Item ${itemId} tiene cambios comerciales, sincronizando con Google Sheets...`);
+      console.log(`📝 Campos cambiados para Sheets: ${updateResult.sheetsFields.join(', ')}`);
       
       try {
         await fetch(`${process.env.SELF_BASE_URL}/api/internal/sync-sheet`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            ...itemData,
+            ...newItemData,
             changeType: updateResult.changeType, // 'created' | 'updated'
-            changedFields: updateResult.changedFields // array de campos que cambiaron
+            changedFields: updateResult.sheetsFields // solo campos relevantes para Sheets
           })
         });
         
@@ -261,8 +260,10 @@ async function processItemUpdate(user_id: string, itemId: string) {
       } catch (err) {
         console.error('❌ Error sincronizando con Google Sheets:', err);
       }
+    } else if (updateResult.hasDbChanges) {
+      console.log(`🗄️ Item ${itemId} actualizado en DB (solo cambios internos: ${updateResult.dbFields.join(', ')})`);
     } else {
-      console.log(`⏭️ Item ${itemId} sin cambios, omitiendo sync con Sheets`);
+      console.log(`⏭️ Item ${itemId} sin cambios, omitiendo actualizaciones`);
     }
 
     console.log(`✅ Item ${itemId} procesado correctamente`);
@@ -271,6 +272,7 @@ async function processItemUpdate(user_id: string, itemId: string) {
     throw error;
   }
 }
+
 
 
 /**
@@ -597,18 +599,21 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
 }
 
 
+
 /**
  * Actualiza el item en la base de datos con comparación inteligente
- * Retorna información sobre si hubo cambios
+ * Retorna información sobre si hubo cambios y de qué tipo
  */
 async function updateItemInDatabaseWithComparison(
   itemId: string, 
   newItemData: any, 
   storeId: string
 ): Promise<{
-  hasChanges: boolean;
+  hasDbChanges: boolean;
+  hasSheetsChanges: boolean;
   changeType: 'created' | 'updated' | 'no-change';
-  changedFields: string[];
+  dbFields: string[];
+  sheetsFields: string[];
   existingItem?: any;
 }> {
   try {
@@ -646,26 +651,30 @@ async function updateItemInDatabaseWithComparison(
       }
 
       return {
-        hasChanges: true,
+        hasDbChanges: true,
+        hasSheetsChanges: true, // Items nuevos siempre van a Sheets
         changeType: 'created',
-        changedFields: ['all'] // Todos los campos son nuevos
+        dbFields: ['all'],
+        sheetsFields: ['all']
       };
     }
 
-    // ✅ Item existe - comparar campos importantes
-    const changedFields = compareItemData(existingItem, updateData);
+    // ✅ Item existe - comparar campos con lógica separada
+    const comparison = compareItemData(existingItem, updateData);
 
-    if (changedFields.length === 0) {
-      // No hay cambios reales
+    if (!comparison.hasDbChanges) {
+      // No hay cambios en absoluto
       return {
-        hasChanges: false,
+        hasDbChanges: false,
+        hasSheetsChanges: false,
         changeType: 'no-change',
-        changedFields: [],
+        dbFields: [],
+        sheetsFields: [],
         existingItem
       };
     }
 
-    // ✅ Hay cambios - actualizar en DB
+    // ✅ Hay cambios en DB - actualizar
     const { error: updateError } = await supabase
       .from('items')
       .update(updateData)
@@ -678,9 +687,11 @@ async function updateItemInDatabaseWithComparison(
     }
 
     return {
-      hasChanges: true,
+      hasDbChanges: true,
+      hasSheetsChanges: comparison.hasSheetsChanges,
       changeType: 'updated',
-      changedFields,
+      dbFields: comparison.dbFields,
+      sheetsFields: comparison.sheetsFields,
       existingItem
     };
 
@@ -691,21 +702,34 @@ async function updateItemInDatabaseWithComparison(
 }
 
 /**
- * Compara dos objetos de item y retorna los campos que cambiaron
- * Solo compara campos importantes que ameritan actualizar Sheets
+ * Compara dos objetos de item y retorna información sobre cambios
+ * Separa entre campos que ameritan DB vs Sheets
  */
-function compareItemData(existingItem: any, newItem: any): string[] {
-  const changedFields: string[] = [];
+function compareItemData(existingItem: any, newItem: any): {
+  dbFields: string[];
+  sheetsFields: string[];
+  hasDbChanges: boolean;
+  hasSheetsChanges: boolean;
+} {
+  const dbFields: string[] = [];
+  const sheetsFields: string[] = [];
   
-  // ✅ Campos importantes que ameritan sync con Sheets
-  const importantFields = [
+  // ✅ Campos que ameritan actualización en DB (incluye available_quantity)
+  const dbOnlyFields = [
+    'available_quantity',  // Stock - importante para DB pero no para Sheets
+    'thumbnail',           // URL de imagen
+    'permalink',           // URL del producto
+    'last_updated'         // Timestamp interno
+  ];
+  
+  // ✅ Campos que ameritan sync con Sheets (campos comerciales importantes)
+  const sheetsRelevantFields = [
     'title',
     'price',
     'base_price',
-    'available_quantity',
     'status',
-    'amount',           // precio promocional
-    'regular_amount',   // precio regular
+    'amount',               // precio promocional
+    'regular_amount',       // precio regular
     'listing_type_id',
     'free_shipping',
     'installments_quantity',
@@ -720,18 +744,35 @@ function compareItemData(existingItem: any, newItem: any): string[] {
     'sku'
   ];
 
-  for (const field of importantFields) {
+  // ✅ Verificar cambios en campos solo de DB
+  for (const field of dbOnlyFields) {
     const existingValue = existingItem[field];
     const newValue = newItem[field];
 
-    // ✅ Comparación inteligente (maneja null/undefined, números, strings)
     if (!areValuesEqual(existingValue, newValue)) {
-      changedFields.push(field);
-      console.log(`📝 Campo cambiado ${field}: ${existingValue} → ${newValue}`);
+      dbFields.push(field);
+      console.log(`🗄️ Campo DB cambiado ${field}: ${existingValue} → ${newValue}`);
     }
   }
 
-  return changedFields;
+  // ✅ Verificar cambios en campos relevantes para Sheets
+  for (const field of sheetsRelevantFields) {
+    const existingValue = existingItem[field];
+    const newValue = newItem[field];
+
+    if (!areValuesEqual(existingValue, newValue)) {
+      dbFields.push(field);      // También va a DB
+      sheetsFields.push(field);  // Y también a Sheets
+      console.log(`📊 Campo Sheets cambiado ${field}: ${existingValue} → ${newValue}`);
+    }
+  }
+
+  return {
+    dbFields,
+    sheetsFields,
+    hasDbChanges: dbFields.length > 0,
+    hasSheetsChanges: sheetsFields.length > 0
+  };
 }
 
 /**
