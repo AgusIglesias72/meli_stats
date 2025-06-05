@@ -1,4 +1,7 @@
-import { getSheetsClient, getSheetsClientBackup } from './googleSheetsClient';
+import { getSheetsClient, getSheetsClientBackup } from './googleSheetsClient'; // Asegúrate que la ruta sea correcta
+import { sheets_v4 } from 'googleapis'; // Podrías necesitar este tipo para 'itemData' si es relevante
+
+
 
 const ITEMS_SPREADSHEET_ID = process.env.ITEMS_SPREADSHEET_ID;
 const SHEET_NAME = 'Items';
@@ -142,7 +145,8 @@ function normalizeMoneyValue(value: string): string {
 
 
 export async function syncItemToSheet(itemData: any) {
-  const sheets = getSheetsClient();
+//  const sheets = getSheetsClient();
+  const sheets: sheets_v4.Sheets = getSheetsClient();
   const newRowValues = itemToRowValues(itemData);
 
   try {

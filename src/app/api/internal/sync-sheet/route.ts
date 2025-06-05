@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncItemToSheet, syncItemToSheetBackup } from '@/lib/syncItemToSheet';
 
-export const maxDuration = 10; // Era 59, ahora 10 segundos máximo
+export const maxDuration = 4; // Era 59, ahora 10 segundos máximo
 //export const runtime = 'edge';
 
 
