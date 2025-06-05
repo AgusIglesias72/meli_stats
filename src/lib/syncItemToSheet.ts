@@ -140,33 +140,21 @@ function normalizeMoneyValue(value: string): string {
 }
 
 
-
-export async function syncItemToSheet(itemData: any) {
+// OPCIÓN 1: Solo valuesResponse (MÁS SIMPLE)
+export async function syncItemToSheetSimple(itemData: any) {
   const sheets = getSheetsClient();
   const newRowValues = itemToRowValues(itemData);
 
   try {
-    // UNA SOLA llamada paralela - sin batchGet
-    const [valuesResponse, sheetResponse] = await Promise.all([
-      sheets.spreadsheets.values.get({
-        spreadsheetId: ITEMS_SPREADSHEET_ID,
-        range: `${SHEET_NAME}!A:AA`,  // Todos los datos
-      }),
-      sheets.spreadsheets.get({
-        spreadsheetId: ITEMS_SPREADSHEET_ID,
-        ranges: [SHEET_NAME],
-        includeGridData: false,
-      })
-    ]);
+    // UNA SOLA llamada
+    const valuesResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId: ITEMS_SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A:AA`,
+    });
 
     const allData = valuesResponse.data.values || [];
-    const sheetInfo = sheetResponse.data.sheets?.[0];
     
-    if (!sheetInfo || !sheetInfo.properties) {
-      throw new Error(`No se pudo obtener información de la hoja "${SHEET_NAME}"`);
-    }
-
-    // Buscar si el item existe (saltar header row si existe)
+    // Buscar si el item existe
     const dataRows = allData.length > 0 && allData[0][0] === 'ID' ? allData.slice(1) : allData;
     const existingRowIndex = dataRows.findIndex(row => row[0] === itemData.item_id);
     
@@ -178,7 +166,7 @@ export async function syncItemToSheet(itemData: any) {
       targetRow = allData.length + 1;
       action = 'insert';
     } else {
-      // Item existe, verificar si hay cambios
+      // Item existe, verificar cambios
       const existingRow = dataRows[existingRowIndex];
       
       if (!hasChanges(existingRow, newRowValues)) {
@@ -190,180 +178,146 @@ export async function syncItemToSheet(itemData: any) {
         };
       }
       
-      // Hay cambios, actualizar
-      // +1 por ser 1-indexed, +1 más si hay header
       targetRow = existingRowIndex + (allData.length > 0 && allData[0][0] === 'ID' ? 2 : 1);
       action = 'update';
     }
 
-    // Verificar si necesitamos expandir la hoja
-    const currentRows = sheetInfo.properties.gridProperties?.rowCount || 0;
+    // PROBLEMA: ¿Qué pasa si targetRow > filas disponibles en la hoja?
+    // Sin sheetResponse, NO SABEMOS si necesitamos expandir la hoja
     
-    if (targetRow > currentRows) {
-      console.log(`Expandiendo hoja: fila objetivo ${targetRow}, filas actuales ${currentRows}`);
-      
-      const newRowCount = targetRow + 100;
-      
-      await sheets.spreadsheets.batchUpdate({
+    // Solución 1: Intentar escribir y manejar error
+    try {
+      await sheets.spreadsheets.values.update({
         spreadsheetId: ITEMS_SPREADSHEET_ID,
-        requestBody: {
-          requests: [
-            {
+        range: `${SHEET_NAME}!A${targetRow}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [newRowValues] },
+      });
+    } catch (error) {
+      // Si falla por falta de filas, expandir y reintentar
+      if (error.message?.includes('exceeds grid limits')) {
+        console.log(`Expandiendo hoja para fila ${targetRow}`);
+        
+        // Ahora SÍ necesitamos sheetResponse para expandir
+        const sheetInfo = await sheets.spreadsheets.get({
+          spreadsheetId: ITEMS_SPREADSHEET_ID,
+          ranges: [SHEET_NAME],
+          includeGridData: false,
+        });
+        
+        const sheet = sheetInfo.data.sheets?.[0];
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: ITEMS_SPREADSHEET_ID,
+          requestBody: {
+            requests: [{
               updateSheetProperties: {
                 properties: {
-                  sheetId: sheetInfo.properties.sheetId,
-                  gridProperties: {
-                    rowCount: newRowCount,
-                  },
+                  sheetId: sheet.properties.sheetId,
+                  gridProperties: { rowCount: targetRow + 100 },
                 },
                 fields: 'gridProperties.rowCount',
               },
-            },
-          ],
-        },
-      });
-      
-      console.log(`Hoja expandida a ${newRowCount} filas`);
+            }],
+          },
+        });
+        
+        // Reintentar escritura
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: ITEMS_SPREADSHEET_ID,
+          range: `${SHEET_NAME}!A${targetRow}`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [newRowValues] },
+        });
+      } else {
+        throw error;
+      }
     }
 
-    // Actualizar la fila
-    const range = `${SHEET_NAME}!A${targetRow}`;
+    console.log(`✅ Item ${itemData.item_id} ${action}ed in row ${targetRow}`);
+    return { success: true, message: `Item ${action}ed successfully`, action };
     
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: ITEMS_SPREADSHEET_ID,
-      range,
-      valueInputOption: 'RAW',
-      requestBody: { values: [newRowValues] },
-    });
-
-    const actionEmoji = action === 'insert' ? '➕' : '🔄';
-    console.log(`${actionEmoji} Item ${itemData.item_id} ${action}ed in row ${targetRow}`);
-
-    return { 
-      success: true, 
-      message: `Google Sheet actualizado para item ${itemData.item_id} en la fila ${targetRow}`,
-      action 
-    };
-
   } catch (err) {
     console.error(`❌ Error syncing item ${itemData.item_id}:`, err);
-    return { 
-      success: false, 
-      message: `Error al actualizar Google Sheet para item ${itemData.item_id}: ${err}` 
-    };
+    return { success: false, message: `Error: ${err}` };
   }
 }
 
-export async function syncItemToSheetBackup(itemData: any) {
-  const sheets = getSheetsClientBackup();
+// OPCIÓN 2: Enfoque híbrido (RECOMENDADO)
+export async function syncItemToSheetHybrid(itemData: any) {
+  const sheets = getSheetsClient();
   const newRowValues = itemToRowValues(itemData);
 
   try {
-    // UNA SOLA llamada paralela - sin batchGet
-    const [valuesResponse, sheetResponse] = await Promise.all([
-      sheets.spreadsheets.values.get({
-        spreadsheetId: ITEMS_SPREADSHEET_ID,
-        range: `${SHEET_NAME}!A:AA`,  // Todos los datos
-      }),
-      sheets.spreadsheets.get({
-        spreadsheetId: ITEMS_SPREADSHEET_ID,
-        ranges: [SHEET_NAME],
-        includeGridData: false,
-      })
-    ]);
+    // Primera llamada: Solo obtener datos
+    const valuesResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId: ITEMS_SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A:AA`,
+    });
 
     const allData = valuesResponse.data.values || [];
-    const sheetInfo = sheetResponse.data.sheets?.[0];
-    
-    if (!sheetInfo || !sheetInfo.properties) {
-      throw new Error(`No se pudo obtener información de la hoja "${SHEET_NAME}"`);
-    }
-
-    // Buscar si el item existe (saltar header row si existe)
     const dataRows = allData.length > 0 && allData[0][0] === 'ID' ? allData.slice(1) : allData;
     const existingRowIndex = dataRows.findIndex(row => row[0] === itemData.item_id);
     
-    let targetRow: number;
-    let action: 'insert' | 'update' | 'skip';
-    
-    if (existingRowIndex === -1) {
-      // Item no existe, insertar al final
-      targetRow = allData.length + 1;
-      action = 'insert';
-    } else {
-      // Item existe, verificar si hay cambios
+    // Si existe y no hay cambios, terminar aquí (1 sola llamada API)
+    if (existingRowIndex !== -1) {
       const existingRow = dataRows[existingRowIndex];
-      
       if (!hasChanges(existingRow, newRowValues)) {
-        console.log(`⏭️ No changes detected for item ${itemData.item_id}, skipping backup update`);
+        console.log(`⏭️ No changes detected for item ${itemData.item_id}, skipping update`);
         return { 
           success: true, 
-          message: `No changes detected for item ${itemData.item_id}`,
+          message: `No changes detected`,
           action: 'skipped'
         };
       }
-      
-      // Hay cambios, actualizar
-      targetRow = existingRowIndex + (allData.length > 0 && allData[0][0] === 'ID' ? 2 : 1);
-      action = 'update';
     }
-
-    // Verificar si necesitamos expandir la hoja
-    const currentRows = sheetInfo.properties.gridProperties?.rowCount || 0;
     
+    // Solo si necesitamos escribir, obtener metadatos de la hoja
+    const targetRow = existingRowIndex !== -1 
+      ? existingRowIndex + (allData[0][0] === 'ID' ? 2 : 1)
+      : allData.length + 1;
+    
+    // Segunda llamada: Solo si necesitamos expandir
+    const sheetResponse = await sheets.spreadsheets.get({
+      spreadsheetId: ITEMS_SPREADSHEET_ID,
+      ranges: [SHEET_NAME],
+      includeGridData: false,
+    });
+    
+    const sheet = sheetResponse.data.sheets?.[0];
+    const currentRows = sheet?.properties?.gridProperties?.rowCount || 0;
+    
+    // Expandir si es necesario
     if (targetRow > currentRows) {
-      console.log(`Expandiendo hoja backup: fila objetivo ${targetRow}, filas actuales ${currentRows}`);
-      
-      const newRowCount = targetRow + 100;
-      
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: ITEMS_SPREADSHEET_ID,
         requestBody: {
-          requests: [
-            {
-              updateSheetProperties: {
-                properties: {
-                  sheetId: sheetInfo.properties.sheetId,
-                  gridProperties: {
-                    rowCount: newRowCount,
-                  },
-                },
-                fields: 'gridProperties.rowCount',
+          requests: [{
+            updateSheetProperties: {
+              properties: {
+                sheetId: sheet.properties.sheetId,
+                gridProperties: { rowCount: targetRow + 100 },
               },
+              fields: 'gridProperties.rowCount',
             },
-          ],
+          }],
         },
       });
-      
-      console.log(`Hoja backup expandida a ${newRowCount} filas`);
     }
-
-    // Actualizar la fila
-    const range = `${SHEET_NAME}!A${targetRow}`;
     
+    // Escribir datos
     await sheets.spreadsheets.values.update({
       spreadsheetId: ITEMS_SPREADSHEET_ID,
-      range,
+      range: `${SHEET_NAME}!A${targetRow}`,
       valueInputOption: 'RAW',
       requestBody: { values: [newRowValues] },
     });
 
-    const actionEmoji = action === 'insert' ? '➕' : '🔄';
-    console.log(`${actionEmoji} [BACKUP] Item ${itemData.item_id} ${action}ed in row ${targetRow}`);
-
-    return { 
-      success: true, 
-      message: `Backup Google Sheet actualizado para item ${itemData.item_id} en la fila ${targetRow}`,
-      action 
-    };
-
+    const action = existingRowIndex !== -1 ? 'update' : 'insert';
+    console.log(`✅ Item ${itemData.item_id} ${action}ed in row ${targetRow}`);
+    return { success: true, message: `Item ${action}ed successfully`, action };
+    
   } catch (err) {
-    console.error(`❌ Error syncing item to backup ${itemData.item_id}:`, err);
-    return { 
-      success: false, 
-      message: `Error al actualizar el Backup para item ${itemData.item_id}: ${err}` 
-    };
+    console.error(`❌ Error syncing item ${itemData.item_id}:`, err);
+    return { success: false, message: `Error: ${err}` };
   }
 }
-  
-
