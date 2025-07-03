@@ -10,59 +10,86 @@ export const runtime = 'edge';
  */
 function getDateRange(dateParam: string | null): { startDate: Date, endDate: Date } {
   const now = new Date();
-  const endDate = new Date(now);
-  const startDate = new Date(now);
+  let startDate: Date;
+  let endDate: Date;
   
-  // Establecer endDate a las 23:59:59 del día actual
-  endDate.setHours(23, 59, 59, 999);
   switch (dateParam) {
     case 'last_date':
       // Último día (ayer)
+      startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 1);
       startDate.setHours(0, 0, 0, 0);
+      
+      endDate = new Date(now);
       endDate.setDate(endDate.getDate() - 1);
+      endDate.setHours(23, 59, 59, 999);
       break;
       
-      case 'last_week':
-        // Encontrar el lunes de esta semana
-        const today = now.getDay(); // 0 = domingo, 1 = lunes, etc.
-        const daysFromMonday = today === 0 ? 6 : today - 1; // Si es domingo (0), retroceder 6 días
-        
-        // Ir al lunes de esta semana
-        const thisMonday = new Date(now);
-        thisMonday.setDate(now.getDate() - daysFromMonday);
-        thisMonday.setHours(0, 0, 0, 0);
-        
-        // El lunes de la semana pasada es 7 días antes
-        startDate.setDate(thisMonday.getDate() - 7);
-        startDate.setHours(0, 0, 0, 0);
-        
-        // El domingo de la semana pasada es 6 días después del lunes pasado
-        endDate.setDate(startDate.getDate() + 6);
-        endDate.setHours(23, 59, 59, 999);
-        break;
+    case 'last_week':
+      // Encontrar el lunes de esta semana
+      const today = now.getDay(); // 0 = domingo, 1 = lunes, etc.
+      const daysFromMonday = today === 0 ? 6 : today - 1; // Si es domingo (0), retroceder 6 días
+      
+      // Ir al lunes de esta semana
+      const thisMonday = new Date(now);
+      thisMonday.setDate(now.getDate() - daysFromMonday);
+      thisMonday.setHours(0, 0, 0, 0);
+      
+      // El lunes de la semana pasada es 7 días antes del lunes de esta semana
+      startDate = new Date(thisMonday);
+      startDate.setDate(thisMonday.getDate() - 7);
+      startDate.setHours(0, 0, 0, 0);
+      
+      // El domingo de la semana pasada es 6 días después del lunes de la semana pasada
+      endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 6);
+      endDate.setHours(23, 59, 59, 999);
+      break;
+      
+    case 'last_month':
+      // Mes pasado completo
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      startDate.setHours(0, 0, 0, 0);
+      
+      // Último día del mes pasado
+      endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+      endDate.setHours(23, 59, 59, 999);
+      break;
       
     case 'month_to_date':
       // Desde el inicio del mes hasta hoy
-      startDate.setDate(1);
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
       startDate.setHours(0, 0, 0, 0);
+      
+      endDate = new Date(now);
+      endDate.setHours(23, 59, 59, 999);
       break;
     
     case 'today':
+      startDate = new Date(now);
       startDate.setHours(0, 0, 0, 0);
+      
+      endDate = new Date(now);
       endDate.setHours(23, 59, 59, 999);
       break;
     
     case 'last_30_days':
+      startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 30);
       startDate.setHours(0, 0, 0, 0);
+      
+      endDate = new Date(now);
       endDate.setHours(23, 59, 59, 999);
       break;
       
     default:
       // Por defecto, últimos 30 días
+      startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 30);
       startDate.setHours(0, 0, 0, 0);
+      
+      endDate = new Date(now);
+      endDate.setHours(23, 59, 59, 999);
   }
 
   console.log('startDate', startDate);
