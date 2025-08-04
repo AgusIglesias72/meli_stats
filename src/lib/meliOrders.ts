@@ -319,14 +319,45 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
           orderDetails.shipping_logistic_type = shippingData.logistic_type || '';
           orderDetails.shipping_status = shippingData.status || '';
 
-          if (shippingData.logistic_type === "self_service") {
-            orderDetails.shipping_amount += shippingData.base_cost || 0;
-            orderDetails.net_received_amount += shippingData.base_cost || 0;
+          // Obtener costos reales de envío usando el endpoint /costs
+          try {
+            const costsResponse = await fetch(`https://api.mercadolibre.com/shipments/${shippingId}/costs`, {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`
+              }
+            });
+            
+            if (costsResponse.ok) {
+              const costsData = await costsResponse.json();
+              
+              if (costsData.senders && costsData.senders[0]) {
+                const senderData = costsData.senders[0];
+                
+                // shipping_amount = lo que RECIBE el vendedor por envío
+                orderDetails.shipping_amount = senderData.cost || 0;
+                
+                // Calcular comisiones de envío si existen
+                if (senderData.charges) {
+                  const shippingCharges = Object.values(senderData.charges)
+                    .reduce((sum: number, val: any) => sum + (typeof val === 'number' ? val : 0), 0);
+                  orderDetails.charge_shipping += shippingCharges;
+                }
+              }
+            } else {
+              console.warn(`Error al obtener costs para envío ${shippingId}: ${costsResponse.status}`);
+              // Fallback: usar base_cost solo para self_service
+              if (shippingData.logistic_type === "self_service") {
+                orderDetails.shipping_amount = shippingData.base_cost || 0;
+              }
+            }
+          } catch (costsError) {
+            console.error(`Error obteniendo costs para envío ${shippingId}:`, costsError);
+            // Fallback: usar base_cost solo para self_service
+            if (shippingData.logistic_type === "self_service") {
+              orderDetails.shipping_amount = shippingData.base_cost || 0;
+            }
           }
-/*
-          const shipmentCost = await fetch(`https://api.mercadolibre.com/shipments/${shippingId}/costs`, {
-        */
-          } else {
+        } else {
           console.error(`Error al obtener información de envío para orden ${orderId}: ${shippingResponse.status}`);
           orderDetails.shipping_id = orderData.shipping.id;
           orderDetails.shipping_mode = '';
@@ -398,9 +429,9 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
                 orderDetails.net_received_amount += paymentData.transaction_details.net_received_amount;
               }
               
-              if (paymentData.shipping_amount && paymentData.shipping_amount > 0) {
-                orderDetails.shipping_amount += paymentData.shipping_amount;
-              }
+              // CORREGIDO: NO sumar paymentData.shipping_amount 
+              // (eso es lo que pag\u00f3 el comprador, no lo que recibe el vendedor)
+              // El shipping_amount correcto se obtiene del endpoint /shipments/{id}/costs
               
               if (paymentData.coupon_amount) {
                 orderDetails.coupon_amount += paymentData.coupon_amount;
