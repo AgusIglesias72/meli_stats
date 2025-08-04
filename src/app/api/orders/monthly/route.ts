@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
-export const maxDuration = 10;
+export const maxDuration = 30; // Aumentado para manejar meses con muchas órdenes
 export const runtime = 'edge';
 
 /**
@@ -175,9 +175,15 @@ async function getAllPaginatedOrders(
   const totalPages = Math.ceil(totalCount / pageSize);
   let allOrders: any[] = [];
 
-  // Obtener todas las páginas en secuencia
+  // Obtener todas las páginas en secuencia con logging mejorado
   for (let page = 1; page <= totalPages; page++) {
     const offset = (page - 1) * pageSize;
+    
+    // Log de progreso cada 10 páginas
+    if (page % 10 === 0 || page === 1 || page === totalPages) {
+      console.log(`Processing page ${page}/${totalPages} (${allOrders.length} orders so far)`);
+    }
+    
     const { data: pageOrders, error: ordersError } = await baseQuery
       .order('date_created', { ascending: false })
       .range(offset, offset + pageSize - 1);
@@ -191,9 +197,10 @@ async function getAllPaginatedOrders(
       allOrders = [...allOrders, ...pageOrders];
     }
 
-    // Límite de seguridad
-    if (allOrders.length >= 20000) {
-      console.warn(`Reached limit of 20000 orders, stopping pagination at page ${page} of ${totalPages}`);
+    // Límite de seguridad aumentado para meses con muchas órdenes
+    if (allOrders.length >= 50000) {
+      console.warn(`Reached limit of 50000 orders, stopping pagination at page ${page} of ${totalPages}`);
+      console.warn(`Total orders found: ${totalCount}, returned: ${allOrders.length}`);
       break;
     }
   }
