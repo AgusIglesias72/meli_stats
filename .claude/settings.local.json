@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(dir:*)",
+      "Bash(node:*)",
+      "Bash(npm run dev:*)",
+      "Bash(start cmd /c:*)",
+      "Bash(timeout:*)",
+      "Bash(export NEXT_PUBLIC_API_SECRET_KEY=\"140d1804-a2f2-48a7-b0e6-0284ca6df415\")",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": []
+  }
+}
