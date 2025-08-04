@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
     console.log(`📄 [EXPORT-PRODUCTS] Using spreadsheet ID: ${SPREADSHEET_ID}`);
     
     // Array para almacenar todos los datos
-    const allProductsData = [];
+    const allProductsData: any[] = [];
     const statsData = {
       totalProducts: 0,
       totalVariants: 0,
@@ -255,7 +255,7 @@ export async function POST(request: NextRequest) {
                   statsData.variantsByProduct.set(itemData.id, itemData.variations.length);
                   
                   // Procesar variantes en paralelo con SKUs
-                  const variantPromises = itemData.variations.map(async (variant) => {
+                  const variantPromises = itemData.variations.map(async (variant: any) => {
                     statsData.totalVariants++;
                     storeStatsData.totalVariants++;
                     statsData.totalStock += variant.available_quantity || 0;
