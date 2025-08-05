@@ -1,7 +1,7 @@
 // test-fix-orders-shipping.js
 // Script para ejecutar la corrección de datos de envío de todas las órdenes
 
-const API_URL = process.env.API_URL || 'http://localhost:3000';
+const API_URL = process.env.API_URL || 'http://localhost:3002';
 const API_SECRET_KEY = process.env.NEXT_PUBLIC_API_SECRET_KEY || 'YOUR_API_KEY';
 
 async function testFixOrdersShipping() {
