@@ -504,10 +504,10 @@ export async function POST(request: NextRequest) {
 
             // Procesar cada item EN PARALELO (para fees y shipping)
             let validItemsInBatch = 0;
-            let skippedReasons = { noBody: 0, emptyBody: 0, noId: 0, errorCode: 0 };
+            const skippedReasons = { noBody: 0, emptyBody: 0, noId: 0, errorCode: 0 };
             
             // Procesar items del lote en paralelo
-            const itemProcessingPromises = itemsData.map(async (itemResponse) => {
+            const itemProcessingPromises = itemsData.map(async (itemResponse: any) => {
               const processedItems: any[] = [];
               
               // Verificar código de respuesta
