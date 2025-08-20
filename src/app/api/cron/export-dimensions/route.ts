@@ -369,7 +369,7 @@ function formatToBuenosAires(datetime: string) {
   return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }
 
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   const startTime = Date.now();
   console.log('===========================================');
   console.log('Starting export-dimensions-v2 at:', new Date().toISOString());
@@ -1070,4 +1070,9 @@ async function getSheetId(sheets: any, spreadsheetId: string, sheetName: string)
     console.error('Error getting sheet ID:', error);
     return 0;
   }
+}
+
+// Exportar POST también para compatibilidad con llamadas manuales
+export async function POST(request: NextRequest) {
+  return GET(request);
 }
