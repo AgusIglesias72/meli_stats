@@ -333,8 +333,26 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
               if (costsData.senders && costsData.senders[0]) {
                 const senderData = costsData.senders[0];
                 
-                // shipping_amount = lo que RECIBE el vendedor por envío
-                orderDetails.shipping_amount = senderData.cost || 0;
+                // shipping_amount = SOLO las bonificaciones que RECIBE el vendedor
+                let shippingAmount = 0;
+
+                // Sumar bonificaciones de senders (mandatory)
+                if (costsData.senders?.[0]?.discounts) {
+                  const mandatoryDiscounts = costsData.senders[0].discounts
+                    .filter((d: any) => d.type === "mandatory")
+                    .reduce((sum: number, d: any) => sum + (d.promoted_amount || 0), 0);
+                  shippingAmount += mandatoryDiscounts;
+                }
+
+                // Sumar bonificaciones de receiver (loyal)
+                if (costsData.receiver?.discounts) {
+                  const loyalDiscounts = costsData.receiver.discounts
+                    .filter((d: any) => d.type === "loyal")
+                    .reduce((sum: number, d: any) => sum + (d.promoted_amount || 0), 0);
+                  shippingAmount += loyalDiscounts;
+                }
+
+                orderDetails.shipping_amount = shippingAmount;
                 
                 // Calcular comisiones de envío si existen
                 if (senderData.charges) {
