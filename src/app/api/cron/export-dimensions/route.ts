@@ -376,9 +376,22 @@ export async function GET(request: NextRequest) {
   console.log('===========================================');
   
   try {
-    // Verificar la autorización mediante clave secreta
-    const authorization = request.headers.get('authorization');
-    if (!authorization || !authorization.startsWith('Bearer ') || authorization.split(' ')[1] !== process.env.NEXT_PUBLIC_API_SECRET_KEY) {
+    // Verificar autorización - soporta tanto Vercel Cron como llamadas manuales
+    const authHeader = request.headers.get('authorization');
+    const cronSecret = process.env.CRON_SECRET;
+    const apiSecret = process.env.NEXT_PUBLIC_API_SECRET_KEY;
+    
+    // Para Vercel Crons - valida usando CRON_SECRET en header
+    if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
+      console.log('Authorized via Vercel CRON_SECRET');
+    }
+    // Para llamadas manuales - valida usando API_SECRET_KEY
+    else if (apiSecret && authHeader === `Bearer ${apiSecret}`) {
+      console.log('Authorized via API_SECRET_KEY');
+    }
+    // Si ninguno coincide, denegar acceso
+    else {
+      console.log('Authorization failed - invalid or missing token');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
