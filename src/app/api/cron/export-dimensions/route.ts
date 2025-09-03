@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { getSheetsClient } from '@/lib/googleSheetsClient';
 
-// export const maxDuration = 59; // Comentado para desarrollo local - sin límite de tiempo
+export const maxDuration = 300; // 5 minutos máximo para el cron job
 
 // Palabras clave para identificar atributos de dimensiones
 const DIMENSION_KEYWORDS = [
