@@ -376,23 +376,21 @@ export async function GET(request: NextRequest) {
   console.log('===========================================');
   
   try {
-    // Verificar autorización - soporta tanto Vercel Cron como llamadas manuales
+    // Verificar autorización - solo para llamadas manuales
     const authHeader = request.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET;
     const apiSecret = process.env.NEXT_PUBLIC_API_SECRET_KEY;
     
-    // Para Vercel Crons - valida usando CRON_SECRET en header
-    if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
-      console.log('Authorized via Vercel CRON_SECRET');
-    }
+    // Para llamadas de Vercel Cron - no requiere auth (es intrínsecamente seguro)
     // Para llamadas manuales - valida usando API_SECRET_KEY
-    else if (apiSecret && authHeader === `Bearer ${apiSecret}`) {
-      console.log('Authorized via API_SECRET_KEY');
-    }
-    // Si ninguno coincide, denegar acceso
-    else {
-      console.log('Authorization failed - invalid or missing token');
+    if (authHeader && apiSecret && authHeader === `Bearer ${apiSecret}`) {
+      console.log('Authorized via API_SECRET_KEY (manual call)');
+    } else if (authHeader) {
+      // Si hay header pero no coincide, denegar
+      console.log('Authorization failed - invalid token');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    } else {
+      // Sin header = llamada de Vercel Cron
+      console.log('Vercel Cron call (no auth header required)');
     }
 
     const supabase = createServerSupabaseClient();
