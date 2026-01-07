@@ -3,9 +3,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { processOrderNotification, processPaymentNotification, processShipmentNotification } from '@/lib/meliOrders';
+import { meliCache } from '@/lib/cache';
 
-export const maxDuration = 20; // Máximo 10 segundos para procesar grandes cantidades de datos
-export const runtime = 'edge';
+export const maxDuration = 60; // Máximo 60 segundos para procesar grandes cantidades de datos
+export const runtime = 'nodejs'; // Node.js runtime para mejor performance y mayor timeout
 
 // Interfaz para las notificaciones de Mercado Libre
 interface MercadoLibreNotification {
@@ -57,6 +58,7 @@ function determineFreeShipping(shippingData: any): boolean {
 
 /**
  * Obtiene los detalles de tarifas de Mercado Libre
+ * Con caché de 1 hora (las tarifas no cambian frecuentemente)
  */
 async function getFeeDetails(
   accessToken: string,
@@ -65,49 +67,61 @@ async function getFeeDetails(
   tags: string[],
   listingTypeId: string
 ): Promise<any> {
-  try {
-    const tagsString = tags.join(',');
-    const siteId = 'MLA'; // Asumiendo que es Argentina
+  // Crear clave de caché basada en parámetros que afectan las fees
+  const tagsString = tags.sort().join(','); // Sort para consistencia
+  const cacheKey = `fees:${categoryId}:${listingTypeId}:${tagsString}`;
 
-    const response = await fetch(
-      `https://api.mercadolibre.com/sites/${siteId}/listing_prices?price=${price}&category_id=${categoryId}&tags=${tagsString}&listing_type_id=${listingTypeId}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
+  return meliCache.getOrFetch(
+    cacheKey,
+    async () => {
+      try {
+        const siteId = 'MLA'; // Asumiendo que es Argentina
+        const tagsParam = tags.join(',');
+
+        console.log(`[CACHE] ⬇️ Fetching fee details para ${categoryId}...`);
+
+        const response = await fetch(
+          `https://api.mercadolibre.com/sites/${siteId}/listing_prices?price=${price}&category_id=${categoryId}&tags=${tagsParam}&listing_type_id=${listingTypeId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`
+            }
+          }
+        );
+
+        if (!response.ok) {
+          console.error(`Error fetching fee details: ${response.status} - ${response.statusText}`);
+          return {
+            meli_percentage_fee: 0,
+            percentage_fee: 0,
+            financing_add_on_fee: 0,
+            fixed_fee: 0,
+            sale_fee_amount: 0
+          };
         }
+
+        const data = await response.json();
+
+        return {
+          meli_percentage_fee: data.sale_fee_details?.meli_percentage_fee || 0,
+          percentage_fee: data.sale_fee_details?.percentage_fee || 0,
+          financing_add_on_fee: data.sale_fee_details?.financing_add_on_fee || 0,
+          fixed_fee: data.sale_fee_details?.fixed_fee || 0,
+          sale_fee_amount: data.sale_fee_amount || 0
+        };
+      } catch (error) {
+        console.error('Error fetching fee details:', error);
+        return {
+          meli_percentage_fee: 0,
+          percentage_fee: 0,
+          financing_add_on_fee: 0,
+          fixed_fee: 0,
+          sale_fee_amount: 0
+        };
       }
-    );
-
-    if (!response.ok) {
-      console.error(`Error fetching fee details: ${response.status} - ${response.statusText}`);
-      return {
-        meli_percentage_fee: 0,
-        percentage_fee: 0,
-        financing_add_on_fee: 0,
-        fixed_fee: 0,
-        sale_fee_amount: 0
-      };
-    }
-
-    const data = await response.json();
-
-    return {
-      meli_percentage_fee: data.sale_fee_details?.meli_percentage_fee || 0,
-      percentage_fee: data.sale_fee_details?.percentage_fee || 0,
-      financing_add_on_fee: data.sale_fee_details?.financing_add_on_fee || 0,
-      fixed_fee: data.sale_fee_details?.fixed_fee || 0,
-      sale_fee_amount: data.sale_fee_amount || 0
-    };
-  } catch (error) {
-    console.error('Error fetching fee details:', error);
-    return {
-      meli_percentage_fee: 0,
-      percentage_fee: 0,
-      financing_add_on_fee: 0,
-      fixed_fee: 0,
-      sale_fee_amount: 0
-    };
-  }
+    },
+    3600 // 1 hora de TTL
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -214,7 +228,11 @@ async function handleNotification(notification: MercadoLibreNotification) {
  * Solo llama a sync-sheet si hay cambios reales
  */
 async function processItemUpdate(user_id: string, itemId: string) {
+  const startTime = Date.now();
+
   try {
+    console.log(`[WEBHOOK] 🚀 Iniciando procesamiento de ${itemId} para usuario ${user_id}`);
+
     const supabase = createServerSupabaseClient();
 
     // Buscar la tienda del usuario para obtener el access_token
@@ -225,50 +243,85 @@ async function processItemUpdate(user_id: string, itemId: string) {
       .single();
 
     if (storeError || !store) {
-      console.error(`No se encontró la tienda para el usuario ${user_id}:`, storeError);
+      console.error(`[WEBHOOK] ❌ No se encontró la tienda para el usuario ${user_id}:`, storeError);
       return;
     }
 
+    // Primero verificar si el item ya existe en DB para optimización de caché
+    const { data: existingItem } = await supabase
+      .from('items')
+      .select('*')
+      .eq('item_id', itemId)
+      .eq('store_id', store.id)
+      .maybeSingle();
+
     // Obtener los datos actualizados del item desde la API de Mercado Libre
-    const newItemData = await fetchItemFromMeli(itemId, store.access_token);
+    const fetchStart = Date.now();
+    const newItemData = await fetchItemFromMeli(itemId, store.access_token, existingItem);
+    const fetchDuration = Date.now() - fetchStart;
+
+    console.log(`[WEBHOOK] ⏱️ Fetch de MercadoLibre tomó ${fetchDuration}ms`);
 
     if (!newItemData) {
-      console.error(`No se pudo obtener información del item ${itemId}`);
+      console.error(`[WEBHOOK] ❌ No se pudo obtener información del item ${itemId}`);
       return;
     }
 
     // ✅ NUEVA LÓGICA: Comparar con datos existentes
-    const updateResult = await updateItemInDatabaseWithComparison(itemId, newItemData, store.id);
+    const dbStart = Date.now();
+    const updateResult = await updateItemInDatabaseWithComparison(itemId, newItemData, store.id, existingItem);
+    const dbDuration = Date.now() - dbStart;
 
-    // ✅ Solo llamar a sync-sheet si hay cambios relevantes para Sheets
+    console.log(`[WEBHOOK] ⏱️ Operación DB tomó ${dbDuration}ms`);
+
+    // ✅ Solo encolar para sync a Sheets si hay cambios relevantes
     if (updateResult.hasSheetsChanges) {
-      console.log(`📊 Item ${itemId} tiene cambios comerciales, sincronizando con Google Sheets...`);
-      console.log(`📝 Campos cambiados para Sheets: ${updateResult.sheetsFields.join(', ')}`);
-      
+      console.log(`[WEBHOOK] 📊 Item ${itemId} tiene cambios comerciales, encolando para sync a Sheets...`);
+      console.log(`[WEBHOOK] 📝 Campos cambiados para Sheets: ${updateResult.sheetsFields.join(', ')}`);
+
       try {
-        await fetch(`${process.env.SELF_BASE_URL}/api/internal/sync-sheet`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...newItemData,
-            changeType: updateResult.changeType, // 'created' | 'updated'
-            changedFields: updateResult.sheetsFields // solo campos relevantes para Sheets
-          })
-        });
-        
-        console.log(`✅ Item ${itemId} sincronizado con Sheets`);
+        // En lugar de sync síncrono, insertar en cola (UPSERT para evitar duplicados)
+        await supabase
+          .from('pending_sheet_syncs')
+          .upsert({
+            item_id: itemId,
+            store_id: store.id,
+            item_data: newItemData,
+            change_type: updateResult.changeType,
+            changed_fields: updateResult.sheetsFields,
+            status: 'pending',
+            attempts: 0
+          }, {
+            onConflict: 'item_id,store_id',
+            ignoreDuplicates: false // Actualizar si ya existe
+          });
+
+        console.log(`[WEBHOOK] ✅ Item ${itemId} encolado para sync a Sheets (procesará en batch)`);
       } catch (err) {
-        console.error('❌ Error sincronizando con Google Sheets:', err);
+        console.error(`[WEBHOOK] ❌ Error encolando item para Sheets:`, err);
       }
     } else if (updateResult.hasDbChanges) {
-      console.log(`🗄️ Item ${itemId} actualizado en DB (solo cambios internos: ${updateResult.dbFields.join(', ')})`);
+      console.log(`[WEBHOOK] 🗄️ Item ${itemId} actualizado en DB (solo cambios internos: ${updateResult.dbFields.join(', ')})`);
     } else {
-      console.log(`⏭️ Item ${itemId} sin cambios, omitiendo actualizaciones`);
+      console.log(`[WEBHOOK] ⏭️ Item ${itemId} sin cambios, omitiendo actualizaciones`);
     }
 
-    console.log(`✅ Item ${itemId} procesado correctamente`);
+    const totalDuration = Date.now() - startTime;
+    console.log(`[WEBHOOK] ✅ Item ${itemId} procesado correctamente en ${totalDuration}ms`);
+
+    // Alertar si es muy lento
+    if (totalDuration > 10000) {
+      console.warn(`[WEBHOOK] ⚠️ SLOW PROCESSING: ${itemId} tomó ${totalDuration}ms (>10s)`);
+    }
+
+    // Logging de estadísticas de caché (cada 10 items procesados)
+    if (Math.random() < 0.1) { // 10% de probabilidad
+      meliCache.logStats();
+    }
+
   } catch (error) {
-    console.error(`❌ Error procesando actualización del item ${itemId}:`, error);
+    const totalDuration = Date.now() - startTime;
+    console.error(`[WEBHOOK] ❌ Error procesando actualización del item ${itemId} después de ${totalDuration}ms:`, error);
     throw error;
   }
 }
@@ -318,8 +371,35 @@ async function getShippingCosts(itemId: string, userId: string, accessToken: str
 
 /**
  * Obtiene información sobre la campaña/promoción aplicada al producto
+ * Con caché de 15 minutos (las campañas pueden cambiar)
  */
 async function getCampaignInfo(itemId: string, accessToken: string): Promise<any> {
+  const cacheKey = `campaign:${itemId}`;
+
+  return meliCache.getOrFetch(
+    cacheKey,
+    async () => {
+      try {
+        console.log(`[CACHE] ⬇️ Fetching campaign info para ${itemId}...`);
+        return await fetchCampaignInfoFromAPI(itemId, accessToken);
+      } catch (error) {
+        console.error(`Error fetching campaign info for item ${itemId}:`, error);
+        return {
+          promotion_id: null,
+          campaign_type: null,
+          meli_percentage_cashback: null,
+          seller_percentage: null
+        };
+      }
+    },
+    900 // 15 minutos de TTL
+  );
+}
+
+/**
+ * Función interna que hace el fetch real de campaign info
+ */
+async function fetchCampaignInfoFromAPI(itemId: string, accessToken: string): Promise<any> {
   try {
     // 1. Primero obtener información del precio de venta para obtener el promotion_id
     const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
@@ -455,20 +535,15 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
     }
 
   } catch (error) {
-    console.error(`Error fetching campaign info for item ${itemId}:`, error);
-    return {
-      promotion_id: null,
-      campaign_type: null,
-      meli_percentage_cashback: null,
-      seller_percentage: null
-    };
+    throw error; // Re-lanzar para que getCampaignInfo lo maneje
   }
 }
 
 /**
  * Obtiene los datos actualizados del item desde la API de Mercado Libre
+ * Con optimización de llamadas condicionales
  */
-async function fetchItemFromMeli(itemId: string, accessToken: string) {
+async function fetchItemFromMeli(itemId: string, accessToken: string, existingItem?: any) {
   try {
     // Hacer petición a la API de Mercado Libre para obtener datos del item y los precios de venta simultáneamente
     const [response, responseSalePrices] = await Promise.all([
@@ -543,21 +618,71 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
     }
 
 
-    // Obtener detalles de tarifas
+    // ✅ OPTIMIZACIÓN CONDICIONAL: Solo hacer llamadas si hay cambios relevantes
     const price = salePrices.amount || data.price;
-    const feeDetails = await getFeeDetails(
-      accessToken,
-      price,
-      data.category_id,
-      data.tags || [],
-      data.listing_type_id
-    );
 
-    // Obtener costos de envío
-    const shippingCosts = await getShippingCosts(itemId, data.seller_id, accessToken);
+    // Verificar qué campos cambiaron para decidir qué APIs llamar
+    const priceChanged = !existingItem || existingItem.price !== price || existingItem.base_price !== data.base_price;
+    const tagsChanged = !existingItem || JSON.stringify(existingItem.item_tags) !== JSON.stringify(data.tags);
+    const shippingChanged = !existingItem || existingItem.shipping_mode !== data.shipping?.mode;
 
-    // Obtener información de campaña/promoción
-    const campaignInfo = await getCampaignInfo(itemId, accessToken);
+    let feeDetails, shippingCosts, campaignInfo;
+
+    if (!existingItem) {
+      // Item nuevo - obtener todo
+      console.log(`[CACHE] 🆕 Item nuevo ${itemId} - fetching all data`);
+      [feeDetails, shippingCosts, campaignInfo] = await Promise.all([
+        getFeeDetails(accessToken, price, data.category_id, data.tags || [], data.listing_type_id),
+        getShippingCosts(itemId, data.seller_id, accessToken),
+        getCampaignInfo(itemId, accessToken)
+      ]);
+    } else {
+      // Item existente - solo llamar APIs si cambió algo relevante
+      const apiCalls: Promise<any>[] = [];
+      const apiTypes: string[] = [];
+
+      if (priceChanged || tagsChanged) {
+        apiCalls.push(getFeeDetails(accessToken, price, data.category_id, data.tags || [], data.listing_type_id));
+        apiTypes.push('fees');
+      } else {
+        apiCalls.push(Promise.resolve({
+          meli_percentage_fee: existingItem.meli_percentage_fee,
+          percentage_fee: existingItem.percentage_fee,
+          financing_add_on_fee: existingItem.financing_add_on_fee,
+          fixed_fee: existingItem.fixed_fee,
+          sale_fee_amount: existingItem.sale_fee_amount
+        }));
+        apiTypes.push('fees-cached');
+      }
+
+      if (shippingChanged) {
+        apiCalls.push(getShippingCosts(itemId, data.seller_id, accessToken));
+        apiTypes.push('shipping');
+      } else {
+        apiCalls.push(Promise.resolve({
+          shipping_list_cost: existingItem.shipping_list_cost,
+          shipping_discount_rate: existingItem.shipping_discount_rate,
+          shipping_promoted_amount: existingItem.shipping_promoted_amount
+        }));
+        apiTypes.push('shipping-cached');
+      }
+
+      if (priceChanged || tagsChanged) {
+        apiCalls.push(getCampaignInfo(itemId, accessToken));
+        apiTypes.push('campaign');
+      } else {
+        apiCalls.push(Promise.resolve({
+          promotion_id: existingItem.promotion_id,
+          campaign_type: existingItem.campaign_type,
+          meli_percentage_cashback: existingItem.meli_percentage_cashback,
+          seller_percentage: existingItem.seller_percentage
+        }));
+        apiTypes.push('campaign-cached');
+      }
+
+      console.log(`[CACHE] 🔄 Item ${itemId} - API calls: ${apiTypes.join(', ')}`);
+      [feeDetails, shippingCosts, campaignInfo] = await Promise.all(apiCalls);
+    }
 
     // Extraer solo los datos que nos interesan para la actualización
     return {
@@ -615,9 +740,10 @@ async function fetchItemFromMeli(itemId: string, accessToken: string) {
  * Retorna información sobre si hubo cambios y de qué tipo
  */
 async function updateItemInDatabaseWithComparison(
-  itemId: string, 
-  newItemData: any, 
-  storeId: string
+  itemId: string,
+  newItemData: any,
+  storeId: string,
+  existingItem?: any
 ): Promise<{
   hasDbChanges: boolean;
   hasSheetsChanges: boolean;
@@ -629,37 +755,47 @@ async function updateItemInDatabaseWithComparison(
   try {
     const supabase = createServerSupabaseClient();
 
-    // ✅ Buscar si el item ya existe
-    const { data: existingItem, error: findError } = await supabase
-      .from('items')
-      .select('*') // Seleccionar todos los campos para comparar
-      .eq('item_id', itemId)
-      .eq('store_id', storeId)
-      .maybeSingle();
+    // Si no se pasó existingItem, buscarlo
+    if (!existingItem) {
+      const { data: foundItem, error: findError } = await supabase
+        .from('items')
+        .select('*')
+        .eq('item_id', itemId)
+        .eq('store_id', storeId)
+        .maybeSingle(); // ✅ Ahora es seguro gracias al constraint unique_item_per_store_v2
 
-    if (findError) {
-      console.error(`Error buscando item ${itemId}:`, findError);
-      throw findError;
+      if (findError) {
+        console.error(`[WEBHOOK] ❌ Error buscando item ${itemId}:`, findError);
+        throw findError;
+      }
+
+      existingItem = foundItem;
     }
 
-    // Preparar datos completos para actualización
+    // Preparar datos completos para upsert
     const updateData = {
       ...newItemData,
       store_id: storeId,
       last_updated: new Date().toISOString()
     };
 
+    // ✅ UPSERT - Maneja race conditions automáticamente
+    // Si dos webhooks llegan simultáneamente, el constraint único previene duplicados
+    const { error: upsertError } = await supabase
+      .from('items')
+      .upsert(updateData, {
+        onConflict: 'item_id,store_id', // Usa el constraint unique_item_per_store_v2
+        ignoreDuplicates: false          // Actualiza si existe
+      });
+
+    if (upsertError) {
+      console.error(`[WEBHOOK] ❌ Error en upsert para ${itemId}:`, upsertError);
+      throw upsertError;
+    }
+
+    // Si no existía, es creación nueva
     if (!existingItem) {
-      // ✅ Item nuevo - crear
-      const { error: insertError } = await supabase
-        .from('items')
-        .insert(updateData);
-
-      if (insertError) {
-        console.error(`Error insertando item ${itemId}:`, insertError);
-        throw insertError;
-      }
-
+      console.log(`[WEBHOOK] 🆕 Item ${itemId} creado en DB`);
       return {
         hasDbChanges: true,
         hasSheetsChanges: true, // Items nuevos siempre van a Sheets
@@ -674,6 +810,7 @@ async function updateItemInDatabaseWithComparison(
 
     if (!comparison.hasDbChanges) {
       // No hay cambios en absoluto
+      console.log(`[WEBHOOK] 💤 Item ${itemId} sin cambios`);
       return {
         hasDbChanges: false,
         hasSheetsChanges: false,
@@ -684,17 +821,8 @@ async function updateItemInDatabaseWithComparison(
       };
     }
 
-    // ✅ Hay cambios en DB - actualizar
-    const { error: updateError } = await supabase
-      .from('items')
-      .update(updateData)
-      .eq('item_id', itemId)
-      .eq('store_id', storeId);
-
-    if (updateError) {
-      console.error(`Error actualizando item ${itemId}:`, updateError);
-      throw updateError;
-    }
+    // Hay cambios
+    console.log(`[WEBHOOK] 🔄 Item ${itemId} actualizado - DB: ${comparison.dbFields.length} campos, Sheets: ${comparison.sheetsFields.length} campos`);
 
     return {
       hasDbChanges: true,
@@ -706,7 +834,7 @@ async function updateItemInDatabaseWithComparison(
     };
 
   } catch (error) {
-    console.error(`Error en updateItemInDatabaseWithComparison para ${itemId}:`, error);
+    console.error(`[WEBHOOK] ❌ Error en updateItemInDatabaseWithComparison para ${itemId}:`, error);
     throw error;
   }
 }
