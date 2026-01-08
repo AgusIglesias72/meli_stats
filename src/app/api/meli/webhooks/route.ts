@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
-import { processOrderNotification, processPaymentNotification, processShipmentNotification } from '@/lib/meliOrders';
+import { processOrderNotification, processShipmentNotification } from '@/lib/meliOrders';
 import { meliCache } from '@/lib/cache';
 
 export const maxDuration = 60; // Máximo 60 segundos para procesar grandes cantidades de datos
@@ -191,17 +191,9 @@ async function handleNotification(notification: MercadoLibreNotification) {
         return;
       }
 
-      else if (notification.topic === 'payments') {
-        await processPaymentNotification(notification)
-          .then(success => {
-            if (success) {
-              console.log(`Notificación de pago procesada con éxito: ${notification.resource}`);
-            }
-          })
-      }
-
-
-      console.log(`Notificación ignorada para topic: ${notification.topic}`);
+      // Ignorar notificaciones de payments - orders_v2 ya contiene toda la info de pagos
+      // Procesar payments es costoso e innecesario (hace llamadas API pesadas)
+      console.log(`[WEBHOOK] ⏭️ Notificación ignorada para topic: ${notification.topic}`);
       return;
     }
 
