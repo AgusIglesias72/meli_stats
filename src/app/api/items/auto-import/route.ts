@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerSupabaseClient } from '@/lib/supabase';
 
-export const maxDuration = 59; // This function can run for a maximum of 59 seconds
+export const maxDuration = 20; // Reduced from 59 to 20 seconds to save costs
 
 // Tipo para la respuesta de la API de Mercado Libre
 interface MLAPISearchResponse {

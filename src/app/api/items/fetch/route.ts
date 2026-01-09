@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
-export const maxDuration = 59; // This function can run for a maximum of 59 seconds
+export const maxDuration = 20; // Reduced from 59 to 20 seconds to save costs
 
 /**
  * Determina la cantidad de cuotas disponibles basado en el tipo de publicación y etiquetas

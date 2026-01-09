@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { cookies } from 'next/headers';
 
-export const maxDuration = 59; // This function can run for a maximum of 5 seconds
+export const maxDuration = 10; // Reduced from 59 to 10 seconds to save costs
 
 
 export async function GET(request: NextRequest) {

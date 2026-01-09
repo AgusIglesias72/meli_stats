@@ -6,7 +6,7 @@
     "crons": [
       {
         "path": "/api/cron/export-dimensions",
-        "schedule": "0 */4 * * *"
+        "schedule": "0 0,12 * * *"
       }
     ]
   }
