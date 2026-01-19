@@ -18,7 +18,8 @@
       "WebFetch(domain:developers.mercadolibre.com.ar)",
       "Bash(npm install:*)",
       "Bash(curl:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(npm view:*)"
     ],
     "deny": []
   }
