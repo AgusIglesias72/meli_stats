@@ -151,16 +151,27 @@ export async function POST(request: NextRequest) {
 
 /**
  * Lógica principal para procesar la notificación de Mercado Libre
+ * OPTIMIZADO: Con deduplicación de webhooks
  */
 async function handleNotification(notification: MercadoLibreNotification) {
   try {
     // Validar que todos los campos necesarios estén presentes
     if (!notification.topic || !notification.resource || !notification.user_id) {
-      console.warn('Notificación incompleta:', notification);
+      console.warn('[WEBHOOK] ⚠️ Notificación incompleta:', notification);
       return;
     }
 
-    console.log('notification', notification);
+    // OPTIMIZACIÓN: Early exit para webhooks duplicados usando caché
+    // ML envía múltiples webhooks del mismo item en ráfaga
+    const dedupeKey = `webhook:${notification.resource}:${notification.sent}`;
+    if (meliCache.get(dedupeKey)) {
+      console.log(`[WEBHOOK] ⏭️ Webhook duplicado ignorado: ${notification.resource}`);
+      return;
+    }
+    // Marcar como procesado por 2 minutos
+    meliCache.set(dedupeKey, true, 120);
+
+    console.log('[WEBHOOK] 📥 Processing notification:', notification);
 
     // Si el topic no contiene "items", simplemente devolvemos éxito
     // Esto incluye topics como "orders", "shipments", etc.
@@ -228,16 +239,27 @@ async function processItemUpdate(user_id: string, itemId: string) {
 
     const supabase = createServerSupabaseClient();
 
-    // Buscar la tienda del usuario para obtener el access_token
-    const { data: store, error: storeError } = await supabase
-      .from('stores')
-      .select('id, ml_user_id, access_token')
-      .eq('ml_user_id', user_id)
-      .single();
+    // OPTIMIZACIÓN: Cachear store lookup (evitar query a Supabase en cada webhook)
+    const storeCacheKey = `store:${user_id}`;
+    let store = meliCache.get<any>(storeCacheKey);
 
-    if (storeError || !store) {
-      console.error(`[WEBHOOK] ❌ No se encontró la tienda para el usuario ${user_id}:`, storeError);
-      return;
+    if (!store) {
+      console.log(`[CACHE] ⬇️ Fetching store data para usuario ${user_id}...`);
+      // Buscar la tienda del usuario para obtener el access_token
+      const { data: storeData, error: storeError } = await supabase
+        .from('stores')
+        .select('id, ml_user_id, access_token')
+        .eq('ml_user_id', user_id)
+        .single();
+
+      if (storeError || !storeData) {
+        console.error(`[WEBHOOK] ❌ No se encontró la tienda para el usuario ${user_id}:`, storeError);
+        return;
+      }
+
+      store = storeData;
+      // Cachear por 1 hora (los tokens duran mucho más)
+      meliCache.set(storeCacheKey, store, 3600);
     }
 
     // Primero verificar si el item ya existe en DB para optimización de caché
@@ -247,6 +269,20 @@ async function processItemUpdate(user_id: string, itemId: string) {
       .eq('item_id', itemId)
       .eq('store_id', store.id)
       .maybeSingle();
+
+    // OPTIMIZACIÓN CRÍTICA: Early exit si el item fue actualizado muy recientemente
+    // Evita llamadas API innecesarias cuando ML envía múltiples webhooks
+    if (existingItem && existingItem.last_updated) {
+      const lastUpdate = new Date(existingItem.last_updated).getTime();
+      const now = Date.now();
+      const timeSinceUpdate = now - lastUpdate;
+
+      // Si se actualizó hace menos de 30 segundos, skip
+      if (timeSinceUpdate < 30000) {
+        console.log(`[WEBHOOK] ⏭️ Item ${itemId} actualizado recientemente (hace ${Math.round(timeSinceUpdate / 1000)}s), omitiendo fetch`);
+        return;
+      }
+    }
 
     // Obtener los datos actualizados del item desde la API de Mercado Libre
     const fetchStart = Date.now();
@@ -269,34 +305,43 @@ async function processItemUpdate(user_id: string, itemId: string) {
 
     // ✅ Solo encolar para sync a Sheets si hay cambios relevantes
     if (updateResult.hasSheetsChanges) {
-      console.log(`[WEBHOOK] 📊 Item ${itemId} tiene cambios comerciales, encolando para sync a Sheets...`);
-      console.log(`[WEBHOOK] 📝 Campos cambiados para Sheets: ${updateResult.sheetsFields.join(', ')}`);
+      console.log(`[WEBHOOK] 📊 Item ${itemId} - Cambios Sheets: ${updateResult.sheetsFields.join(', ')}`);
 
-      try {
-        // En lugar de sync síncrono, insertar en cola (UPSERT para evitar duplicados)
-        await supabase
-          .from('pending_sheet_syncs')
-          .upsert({
-            item_id: itemId,
-            store_id: store.id,
-            item_data: newItemData,
-            change_type: updateResult.changeType,
-            changed_fields: updateResult.sheetsFields,
-            status: 'pending',
-            attempts: 0
-          }, {
-            onConflict: 'item_id,store_id',
-            ignoreDuplicates: false // Actualizar si ya existe
-          });
+      // OPTIMIZACIÓN: No hacer DB write si no es necesario
+      // Si hay cambios mínimos (ej: solo thumbnail), puede que no valga la pena encolar
+      const significantChanges = updateResult.sheetsFields.some(field =>
+        ['price', 'status', 'title', 'base_price', 'sale_fee_amount'].includes(field)
+      );
 
-        console.log(`[WEBHOOK] ✅ Item ${itemId} encolado para sync a Sheets (procesará en batch)`);
-      } catch (err) {
-        console.error(`[WEBHOOK] ❌ Error encolando item para Sheets:`, err);
+      if (significantChanges) {
+        try {
+          // En lugar de sync síncrono, insertar en cola (UPSERT para evitar duplicados)
+          await supabase
+            .from('pending_sheet_syncs')
+            .upsert({
+              item_id: itemId,
+              store_id: store.id,
+              item_data: newItemData,
+              change_type: updateResult.changeType,
+              changed_fields: updateResult.sheetsFields,
+              status: 'pending',
+              attempts: 0
+            }, {
+              onConflict: 'item_id,store_id',
+              ignoreDuplicates: false // Actualizar si ya existe
+            });
+
+          console.log(`[WEBHOOK] ✅ Encolado para Sheets (cambios significativos)`);
+        } catch (err) {
+          console.error(`[WEBHOOK] ❌ Error encolando item para Sheets:`, err);
+        }
+      } else {
+        console.log(`[WEBHOOK] ⏭️ Cambios menores, omitiendo cola Sheets`);
       }
     } else if (updateResult.hasDbChanges) {
-      console.log(`[WEBHOOK] 🗄️ Item ${itemId} actualizado en DB (solo cambios internos: ${updateResult.dbFields.join(', ')})`);
+      console.log(`[WEBHOOK] 🗄️ Actualizado en DB (solo: ${updateResult.dbFields.join(', ')})`);
     } else {
-      console.log(`[WEBHOOK] ⏭️ Item ${itemId} sin cambios, omitiendo actualizaciones`);
+      console.log(`[WEBHOOK] ⏭️ Sin cambios detectados`);
     }
 
     const totalDuration = Date.now() - startTime;
@@ -638,7 +683,7 @@ async function updateItemInDatabaseWithComparison(
 
 /**
  * Compara dos objetos de item y retorna información sobre cambios
- * Separa entre campos que ameritan DB vs Sheets
+ * OPTIMIZADO: Early exit y comparación prioritaria de campos críticos
  */
 function compareItemData(existingItem: any, newItem: any): {
   dbFields: string[];
@@ -648,21 +693,40 @@ function compareItemData(existingItem: any, newItem: any): {
 } {
   const dbFields: string[] = [];
   const sheetsFields: string[] = [];
-  
-  // ✅ Campos que ameritan actualización en DB (incluye available_quantity)
+
+  // OPTIMIZACIÓN: Campos críticos primero (early exit si cambian)
+  const criticalSheetsFields = ['price', 'status', 'available_quantity'];
+
+  // ✅ Verificar campos críticos PRIMERO (los que más cambian)
+  for (const field of criticalSheetsFields) {
+    const existingValue = existingItem[field];
+    const newValue = newItem[field];
+
+    if (!areValuesEqual(existingValue, newValue)) {
+      if (field === 'available_quantity') {
+        // Stock solo va a DB
+        dbFields.push(field);
+        console.log(`🗄️ [CRITICAL] Stock cambiado: ${existingValue} → ${newValue}`);
+      } else {
+        // Precio y status van a ambos
+        dbFields.push(field);
+        sheetsFields.push(field);
+        console.log(`📊 [CRITICAL] ${field} cambiado: ${existingValue} → ${newValue}`);
+      }
+    }
+  }
+
+  // ✅ Campos DB menos importantes (solo si vale la pena seguir comparando)
   const dbOnlyFields = [
-    'available_quantity',  // Stock - importante para DB pero no para Sheets
     'thumbnail',           // URL de imagen
     'permalink',           // URL del producto
     'last_updated'         // Timestamp interno
   ];
-  
-  // ✅ Campos que ameritan sync con Sheets (campos comerciales importantes)
-  const sheetsRelevantFields = [
+
+  // ✅ Campos Sheets menos críticos
+  const otherSheetsFields = [
     'title',
-    'price',
     'base_price',
-    'status',
     'amount',               // precio promocional
     'regular_amount',       // precio regular
     'listing_type_id',
@@ -672,33 +736,27 @@ function compareItemData(existingItem: any, newItem: any): {
     'percentage_fee',
     'meli_percentage_fee',
     'shipping_list_cost',
-    'promotion_id',
-    'campaign_type',
-    'meli_percentage_cashback',
-    'seller_percentage',
     'sku'
   ];
 
-  // ✅ Verificar cambios en campos solo de DB
+  // Verificar campos solo de DB
   for (const field of dbOnlyFields) {
     const existingValue = existingItem[field];
     const newValue = newItem[field];
 
     if (!areValuesEqual(existingValue, newValue)) {
       dbFields.push(field);
-      console.log(`🗄️ Campo DB cambiado ${field}: ${existingValue} → ${newValue}`);
     }
   }
 
-  // ✅ Verificar cambios en campos relevantes para Sheets
-  for (const field of sheetsRelevantFields) {
+  // Verificar otros campos relevantes para Sheets (solo si no es spam de webhooks)
+  for (const field of otherSheetsFields) {
     const existingValue = existingItem[field];
     const newValue = newItem[field];
 
     if (!areValuesEqual(existingValue, newValue)) {
       dbFields.push(field);      // También va a DB
       sheetsFields.push(field);  // Y también a Sheets
-      console.log(`📊 Campo Sheets cambiado ${field}: ${existingValue} → ${newValue}`);
     }
   }
 
