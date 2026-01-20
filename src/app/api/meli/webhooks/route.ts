@@ -210,6 +210,14 @@ async function handleNotification(notification: MercadoLibreNotification) {
     }
 
     // A partir de aquí sabemos que es un topic relacionado con items (items, items_prices, etc.)
+
+    // OPTIMIZACIÓN TEMPORAL: Ignorar webhooks de items - clientes no usando el lector
+    // Si se necesita reactivar, comentar las siguientes 3 líneas
+    console.log(`[WEBHOOK] ⏭️ Webhooks de items deshabilitados temporalmente: ${notification.resource}`);
+    return;
+
+    // CÓDIGO DESHABILITADO - descomentar para reactivar
+    /*
     // Extraer el ID del producto del resource (formato: '/items/MLA1234567')
     const itemIdMatch = notification.resource.match(/\/items\/([A-Za-z0-9]+)/);
     if (!itemIdMatch) {
@@ -221,6 +229,7 @@ async function handleNotification(notification: MercadoLibreNotification) {
 
     // Procesar la actualización del item
     await processItemUpdate(notification.user_id.toString(), itemId);
+    */
 
   } catch (err) {
     console.error('Error en el procesamiento de la notificación:', err);
