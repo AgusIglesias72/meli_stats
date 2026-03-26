@@ -216,7 +216,7 @@ export async function processPaymentNotification(notification: OrderNotification
 /**
  * Obtiene los detalles completos de una orden
  */
-async function fetchOrderDetails(orderId: string, userId: string, accessToken: string): Promise<any> {
+export async function fetchOrderDetails(orderId: string, userId: string, accessToken: string): Promise<any> {
   try {
     // 1. Obtener información principal de la orden
     const orderResponse = await fetch(`https://api.mercadolibre.com/orders/${orderId}`, {
@@ -569,7 +569,7 @@ async function fetchShipmentDetails(shipmentId: string, accessToken: string): Pr
 /**
  * Guarda o actualiza una orden en la base de datos
  */
-async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: string): Promise<boolean> {
+export async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: string): Promise<boolean> {
   try {
     // Verificar si la orden ya existe
     const [existingOrder] = await db.select({ id: orders.id })
