@@ -1,7 +1,9 @@
 // src/app/api/meli/webhooks/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores, items, pendingSheetSyncs } from '@/lib/db/schema';
+import { eq, and, sql } from 'drizzle-orm';
 import { processOrderNotification, processShipmentNotification } from '@/lib/meliOrders';
 import { meliCache } from '@/lib/cache';
 
@@ -246,23 +248,17 @@ async function processItemUpdate(user_id: string, itemId: string) {
   try {
     console.log(`[WEBHOOK] 🚀 Iniciando procesamiento de ${itemId} para usuario ${user_id}`);
 
-    const supabase = createServerSupabaseClient();
-
-    // OPTIMIZACIÓN: Cachear store lookup (evitar query a Supabase en cada webhook)
+    // OPTIMIZACIÓN: Cachear store lookup (evitar query a DB en cada webhook)
     const storeCacheKey = `store:${user_id}`;
     let store = meliCache.get<any>(storeCacheKey);
 
     if (!store) {
       console.log(`[CACHE] ⬇️ Fetching store data para usuario ${user_id}...`);
       // Buscar la tienda del usuario para obtener el access_token
-      const { data: storeData, error: storeError } = await supabase
-        .from('stores')
-        .select('id, ml_user_id, access_token')
-        .eq('ml_user_id', user_id)
-        .single();
+      const [storeData] = await db.select({ id: stores.id, ml_user_id: stores.ml_user_id, access_token: stores.access_token }).from(stores).where(eq(stores.ml_user_id, Number(user_id))).limit(1);
 
-      if (storeError || !storeData) {
-        console.error(`[WEBHOOK] ❌ No se encontró la tienda para el usuario ${user_id}:`, storeError);
+      if (!storeData) {
+        console.error(`[WEBHOOK] ❌ No se encontró la tienda para el usuario ${user_id}`);
         return;
       }
 
@@ -272,12 +268,7 @@ async function processItemUpdate(user_id: string, itemId: string) {
     }
 
     // Primero verificar si el item ya existe en DB para optimización de caché
-    const { data: existingItem } = await supabase
-      .from('items')
-      .select('*')
-      .eq('item_id', itemId)
-      .eq('store_id', store.id)
-      .maybeSingle();
+    const [existingItem] = await db.select().from(items).where(and(eq(items.item_id, itemId), eq(items.store_id, store.id))).limit(1);
 
     // OPTIMIZACIÓN CRÍTICA: Early exit si el item fue actualizado muy recientemente
     // Evita llamadas API innecesarias cuando ML envía múltiples webhooks
@@ -325,20 +316,22 @@ async function processItemUpdate(user_id: string, itemId: string) {
       if (significantChanges) {
         try {
           // En lugar de sync síncrono, insertar en cola (UPSERT para evitar duplicados)
-          await supabase
-            .from('pending_sheet_syncs')
-            .upsert({
-              item_id: itemId,
-              store_id: store.id,
+          await db.insert(pendingSheetSyncs).values({
+            item_id: itemId,
+            store_id: store.id,
+            item_data: newItemData,
+            change_type: updateResult.changeType,
+            changed_fields: updateResult.sheetsFields,
+            status: 'pending',
+            attempts: 0
+          } as any).onConflictDoUpdate({
+            target: [pendingSheetSyncs.item_id, (pendingSheetSyncs as any).store_id],
+            set: {
               item_data: newItemData,
-              change_type: updateResult.changeType,
-              changed_fields: updateResult.sheetsFields,
               status: 'pending',
               attempts: 0
-            }, {
-              onConflict: 'item_id,store_id',
-              ignoreDuplicates: false // Actualizar si ya existe
-            });
+            } as any
+          });
 
           console.log(`[WEBHOOK] ✅ Encolado para Sheets (cambios significativos)`);
         } catch (err) {
@@ -576,7 +569,7 @@ async function fetchItemFromMeli(itemId: string, accessToken: string, existingIt
       category_id: data.category_id,
       seller_id: data.seller_id,
       seller_nickname: data.seller?.nickname,
-      last_updated: new Date().toISOString(),
+      last_updated: new Date(),
     };
   } catch (error) {
     console.error(`Error obteniendo datos del item ${itemId} desde Mercado Libre:`, error);
@@ -604,45 +597,26 @@ async function updateItemInDatabaseWithComparison(
   existingItem?: any;
 }> {
   try {
-    const supabase = createServerSupabaseClient();
-
     // Si no se pasó existingItem, buscarlo
     if (!existingItem) {
-      const { data: foundItem, error: findError } = await supabase
-        .from('items')
-        .select('*')
-        .eq('item_id', itemId)
-        .eq('store_id', storeId)
-        .maybeSingle(); // ✅ Ahora es seguro gracias al constraint unique_item_per_store_v2
+      const [foundItem] = await db.select().from(items).where(and(eq(items.item_id, itemId), eq(items.store_id, storeId))).limit(1);
 
-      if (findError) {
-        console.error(`[WEBHOOK] ❌ Error buscando item ${itemId}:`, findError);
-        throw findError;
-      }
-
-      existingItem = foundItem;
+      existingItem = foundItem || null;
     }
 
     // Preparar datos completos para upsert
     const updateData = {
       ...newItemData,
       store_id: storeId,
-      last_updated: new Date().toISOString()
+      last_updated: new Date()
     };
 
     // ✅ UPSERT - Maneja race conditions automáticamente
     // Si dos webhooks llegan simultáneamente, el constraint único previene duplicados
-    const { error: upsertError } = await supabase
-      .from('items')
-      .upsert(updateData, {
-        onConflict: 'item_id,store_id', // Usa el constraint unique_item_per_store_v2
-        ignoreDuplicates: false          // Actualiza si existe
-      });
-
-    if (upsertError) {
-      console.error(`[WEBHOOK] ❌ Error en upsert para ${itemId}:`, upsertError);
-      throw upsertError;
-    }
+    await db.insert(items).values(updateData).onConflictDoUpdate({
+      target: [items.item_id, items.store_id],
+      set: updateData
+    });
 
     // Si no existía, es creación nueva
     if (!existingItem) {

@@ -1,7 +1,9 @@
 // Import necesario para Next.js API route
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { storeUsers, stores, items } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 
 export const maxDuration = 20; // Reduced from 59 to 20 seconds to save costs
 
@@ -65,7 +67,7 @@ function determineInstallmentsQuantity(listingTypeId: string, tags: string[]): n
     if (tags.includes("cuota-simple-paid-by-buyer")) return 1; // Vendedor tiene habilitado Cuota Simple
     return 1; // No quiere agregar cuotas
   }
-  
+
   if (listingTypeId === "gold_pro") {
     // Por defecto 6 cuotas para gold_pro
     if (tags.includes("3x_campaign")) return 3; // 3 cuotas al mismo precio que publicaste
@@ -76,7 +78,7 @@ function determineInstallmentsQuantity(listingTypeId: string, tags: string[]): n
     if (tags.includes("12x_campaign")) return 12; // 12 cuotas al mismo precio que publicaste
     return 6; // Valor por defecto para gold_pro
   }
-  
+
   return 1; // Valor por defecto para otros tipos de listing
 }
 
@@ -95,15 +97,15 @@ function determineFreeShipping(shippingData: any): boolean {
  */
 async function getFeeDetails(
   accessToken: string,
-  price: number, 
-  categoryId: string, 
-  tags: string[], 
+  price: number,
+  categoryId: string,
+  tags: string[],
   listingTypeId: string
 ): Promise<any> {
   try {
     const tagsString = tags.join(',');
     const siteId = 'MLA'; // Asumiendo que es Argentina
-    
+
     const response = await fetch(
       `https://api.mercadolibre.com/sites/${siteId}/listing_prices?price=${price}&category_id=${categoryId}&tags=${tagsString}&listing_type_id=${listingTypeId}`,
       {
@@ -125,7 +127,7 @@ async function getFeeDetails(
     }
 
     const data = await response.json();
-    
+
     return {
       meli_percentage_fee: data.sale_fee_details?.meli_percentage_fee || 0,
       percentage_fee: data.sale_fee_details?.percentage_fee || 0,
@@ -162,7 +164,7 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
-    
+
     if (!selectedStoreId) {
       return NextResponse.json(
         { error: 'No hay tienda seleccionada.' },
@@ -170,18 +172,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Crear cliente de Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Obtener información de la tienda seleccionada
-    const { data: userAccess, error: accessError } = await supabase
-      .from('store_users')
-      .select('role')
-      .eq('user_id', authUserId)
-      .eq('store_id', selectedStoreId)
-      .single();
-    
-    if (accessError || !userAccess) {
+    const [userAccess] = await db.select({ role: storeUsers.role }).from(storeUsers).where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, selectedStoreId))).limit(1);
+
+    if (!userAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
@@ -190,23 +184,19 @@ export async function POST(request: NextRequest) {
     }
 
     // Obtener usuario de Mercado Libre asociado a la tienda
-    const { data: storeData, error: storeError } = await supabase
-      .from('stores')
-      .select('id, store_id, ml_user_id, access_token, token_expiry')
-      .eq('id', selectedStoreId)
-      .single();
-    
-    if (storeError || !storeData) {
+    const [storeData] = await db.select({ id: stores.id, store_id: stores.store_id, ml_user_id: stores.ml_user_id, access_token: stores.access_token, token_expiry: stores.token_expiry }).from(stores).where(eq(stores.id, selectedStoreId)).limit(1);
+
+    if (!storeData) {
       return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
-    if (new Date(storeData.token_expiry) < new Date()) {
+    if (new Date(storeData.token_expiry!) < new Date()) {
       return NextResponse.json({ error: 'Token expired, please re-authenticate' }, { status: 401 });
     }
-    
+
     const accessToken = storeData.access_token;
     const userId = storeData.ml_user_id;
-    
+
     if (!accessToken) {
       return NextResponse.json(
         { error: 'No autorizado. Falta token de acceso.' },
@@ -215,20 +205,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Recopilar todos los IDs de productos disponibles
-    const allProductIds = await getAllProductIds(accessToken, userId);
-    
+    const allProductIds = await getAllProductIds(accessToken, String(userId));
+
     // Obtener IDs que ya existen en la base de datos para evitar duplicados
-    const { data: existingItems } = await supabase
-      .from('items')
-      .select('item_id')
-      .eq('user_id', userId);
-    
+    const existingItems = await db.select({ item_id: items.item_id }).from(items).where(eq(items.user_id, String(userId)));
+
     // Crear un Set para búsqueda eficiente
     const existingItemIds = new Set(existingItems?.map(item => item.item_id) || []);
-      
+
     // Filtrar para procesar solo los nuevos
     const newItemIds = allProductIds.filter((id: string) => !existingItemIds.has(id));
-    
+
     if (newItemIds.length === 0) {
       return NextResponse.json({
         imported: 0,
@@ -237,53 +224,53 @@ export async function POST(request: NextRequest) {
         message: 'No hay nuevos productos para importar'
       });
     }
-    
+
     // Variables para seguimiento
     const itemsToInsert = [];
     const failedItems = [];
-    
+
     // Procesar los productos en lotes de 20
     const batchSize = 20;
     for (let i = 0; i < newItemIds.length; i += batchSize) {
       const batch = newItemIds.slice(i, i + batchSize);
-      
+
       // Obtener los precios de venta para este lote
       const priceDataMap = await getProductsSalePrices(batch, accessToken);
-      
+
       // Obtener información detallada de los productos
       const itemInfoResponse = await fetch(`https://api.mercadolibre.com/items?ids=${batch.join(',')}`, {
         headers: {
           'Authorization': `Bearer ${accessToken}`
         }
       });
-      
+
       if (!itemInfoResponse.ok) {
         // Si falla todo el lote, añadir todos los IDs a fallidos
         failedItems.push(...batch);
         continue;
       }
-      
+
       const itemsData = await itemInfoResponse.json();
-      
+
       // Procesar cada producto
       for (const itemData of itemsData) {
         if (itemData.code !== 200 || !itemData.body) {
           failedItems.push(itemData.id || 'unknown');
           continue;
         }
-        
+
         const item = itemData.body;
         const priceData = priceDataMap[item.id];
-        
+
         // Determinar free_shipping
         const freeShipping = determineFreeShipping(item.shipping);
-        
+
         // Determinar installments_quantity
         const installmentsQuantity = determineInstallmentsQuantity(
           item.listing_type_id,
           item.tags || []
         );
-        
+
         // Obtener detalles de tarifas
         const feeDetails = await getFeeDetails(
           accessToken,
@@ -293,7 +280,7 @@ export async function POST(request: NextRequest) {
           item.listing_type_id
         );
 
-        
+
         // Extraer el SKU de los atributos
         let sku = extractSkuFromAttributes(item.attributes);
 
@@ -306,10 +293,10 @@ export async function POST(request: NextRequest) {
                   'Authorization': `Bearer ${accessToken}`
                 }
               });
-        
+
               if (related_response.ok) {
-                const related_data = await related_response.json(); 
-        
+                const related_data = await related_response.json();
+
                 if (related_data.attributes && Array.isArray(related_data.attributes)) {
                   // Buscar el atributo con id "SELLER_SKU"
                   const skuAttribute = related_data.attributes.find((attr: any) => attr.id === "SELLER_SKU");
@@ -329,11 +316,11 @@ export async function POST(request: NextRequest) {
         }
 
         // Obtener costos de envío para el vendedor
-        const shippingCosts = await getShippingCosts(item.id, userId, accessToken);
-        
+        const shippingCosts = await getShippingCosts(item.id, String(userId), accessToken);
+
         // Obtener información de campaña/promoción
         const campaignInfo = await getCampaignInfo(item.id, accessToken);
-        
+
         // Preparar el objeto para insertar, incluyendo datos de precios y nuevos campos
         itemsToInsert.push({
           item_id: item.id,
@@ -375,27 +362,19 @@ export async function POST(request: NextRequest) {
           campaign_type: campaignInfo.campaign_type,
           meli_percentage_cashback: campaignInfo.meli_percentage_cashback,
           seller_percentage: campaignInfo.seller_percentage,
-          last_updated: new Date().toISOString()
+          last_updated: new Date()
         });
       }
     }
-    
+
     // Insertar en la base de datos
-    const { error: insertError, data: insertedItems } = await supabase
-      .from('items')
-      .insert(itemsToInsert)
-      .select();
-    
+    const insertedItems = await db.insert(items).values(itemsToInsert).returning();
+
     // Obtener el número de elementos insertados
-    const count = insertedItems ? insertedItems.length : 0;
-    
-    if (insertError) {
-      console.error('Error al insertar items:', insertError);
-      return NextResponse.json({ error: insertError.message }, { status: 500 });
-    }
-    
+    const insertCount = insertedItems ? insertedItems.length : 0;
+
     return NextResponse.json({
-      imported: count,
+      imported: insertCount,
       failed: failedItems.length,
       total: newItemIds.length
     });
@@ -404,7 +383,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }
-   
+
 /**
  * Obtiene todos los IDs de productos disponibles usando paginación con scroll_id.
  * Esta función maneja correctamente grandes volúmenes de productos (más de 1000).
@@ -413,34 +392,34 @@ async function getAllProductIds(accessToken: string, userId: string): Promise<st
   const allIds: Set<string> = new Set(); // Usamos un Set para evitar duplicados automáticamente
   let scrollId: string | null = null;
   let hasMore = true;
-  
+
   while (hasMore) {
     try {
       // Construir URL de consulta
       let url = `https://api.mercadolibre.com/users/${userId}/items/search?search_type=scan&limit=100`;
-      
+
       // Añadir scroll_id si existe
       if (scrollId) {
         url += `&scroll_id=${encodeURIComponent(scrollId)}`;
       }
-      
+
       // Consultar productos con paginación
       const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${accessToken}`
         }
       });
-      
+
       if (!response.ok) {
         throw new Error(`Error al obtener productos: ${response.status} ${response.statusText}`);
       }
-      
+
       const data = await response.json();
-      
+
       // Guardar IDs de esta página
       const pageIds = data.results || [];
       pageIds.forEach((id: string) => allIds.add(id));
-      
+
       // Verificar si hay más páginas
       if (data.scroll_id && data.scroll_id !== scrollId && data.scroll_id !== "") {
         // Actualizar scrollId para la siguiente iteración
@@ -449,19 +428,19 @@ async function getAllProductIds(accessToken: string, userId: string): Promise<st
         // No hay más páginas para procesar
         hasMore = false;
       }
-      
+
       // Esperar un poco entre solicitudes para no sobrecargar la API
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
       console.log(`Obtenidos ${pageIds.length} productos. Total acumulado: ${allIds.size}`);
-      
+
     } catch (error) {
       console.error(`Error al obtener página de productos:`, error);
       hasMore = false; // Detener el bucle en caso de error
       break;
     }
   }
-  
+
   return Array.from(allIds); // Convertir el Set a Array
 }
 
@@ -472,10 +451,10 @@ async function fetchItemsBatch(accessToken: string, itemIds: string[]): Promise<
   if (itemIds.length === 0) {
     return [];
   }
-  
+
   // Preparar IDs separados por comas
   const idsParam = itemIds.join(',');
-  
+
   const response = await fetch(
     `https://api.mercadolibre.com/items?ids=${idsParam}`,
     {
@@ -484,13 +463,13 @@ async function fetchItemsBatch(accessToken: string, itemIds: string[]): Promise<
       }
     }
   );
-  
+
   if (!response.ok) {
     throw new Error(`Error al obtener lote de items: ${response.status} ${response.statusText}`);
   }
-  
+
   const data = await response.json();
-  
+
   // Filtrar solo los resultados exitosos y extraer los cuerpos
   return data
     .filter((result: any) => result.code === 200)
@@ -509,11 +488,11 @@ async function fetchSingleItem(accessToken: string, itemId: string): Promise<any
       }
     }
   );
-  
+
   if (!response.ok) {
     throw new Error(`Error al obtener item individual: ${response.status} ${response.statusText}`);
   }
-  
+
   return response.json();
 }
 
@@ -522,12 +501,12 @@ async function fetchSingleItem(accessToken: string, itemId: string): Promise<any
  */
 async function getProductsSalePrices(itemIds: string[], accessToken: string) {
   const priceDataMap: { [key: string]: any } = {};
-  
+
   // Procesar en lotes más pequeños para evitar sobrecargar la API
   const batchSize = 20;
   for (let i = 0; i < itemIds.length; i += batchSize) {
     const batch = itemIds.slice(i, i + batchSize);
-    
+
     // Realizar consultas en paralelo para mayor eficiencia
     const pricePromises = batch.map(async (itemId: string) => {
       try {
@@ -536,7 +515,7 @@ async function getProductsSalePrices(itemIds: string[], accessToken: string) {
             'Authorization': `Bearer ${accessToken}`
           }
         });
-        
+
         if (response.ok) {
           const priceData = await response.json();
           return { itemId, priceData };
@@ -547,15 +526,15 @@ async function getProductsSalePrices(itemIds: string[], accessToken: string) {
         return { itemId, priceData: null };
       }
     });
-    
+
     const priceResults = await Promise.all(pricePromises);
-    
+
     // Añadir resultados al mapa
     for (const result of priceResults) {
       priceDataMap[result.itemId] = result.priceData;
     }
   }
-  
+
   return priceDataMap;
 }
 
@@ -583,7 +562,7 @@ async function getShippingCosts(itemId: string, userId: string, accessToken: str
     }
 
     const data = await response.json();
-    
+
     // Extraer los datos que nos interesan
     return {
       shipping_list_cost: data.coverage?.all_country?.list_cost || null,
@@ -623,7 +602,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
 
     const salePriceData = await salePriceResponse.json();
     const promotionId = salePriceData.metadata?.promotion_id;
-    const campaignId = salePriceData.metadata?.campaign_id; 
+    const campaignId = salePriceData.metadata?.campaign_id;
     if (!promotionId) {
       return {
         promotion_id: null,
@@ -681,7 +660,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
 
     const itemPromotionData = await itemPromotionResponse.json();
     const itemPromotion = itemPromotionData.results[0];
-    
+
     return {
       promotion_id: promotionId,
       campaign_type: promotionType,
@@ -708,15 +687,15 @@ function extractSkuFromAttributes(attributes: any[]): string | null {
   if (!attributes || !Array.isArray(attributes)) {
     return null;
   }
-  
+
   // Buscar el atributo con id "SELLER_SKU"
   const skuAttribute = attributes.find(attr => attr.id === "SELLER_SKU");
-  
+
   // Si lo encontramos, devolver su value_name
   if (skuAttribute && skuAttribute.value_name) {
     return skuAttribute.value_name;
   }
-  
+
   return null;
 }
 
@@ -724,13 +703,11 @@ function extractSkuFromVariations(variations: any[]): string | null {
   if (!variations || !Array.isArray(variations)) {
     return null;
   }
-  
+
   const skuAttribute = variations.find(variation => variation.id === "SELLER_SKU");
   if (skuAttribute && skuAttribute.value_name) {
     return skuAttribute.value_name;
   }
-  
+
   return null;
 }
-
-

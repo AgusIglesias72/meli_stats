@@ -1,6 +1,8 @@
 // src/app/api/cron/update-tracked-items/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores, trackedItemsConfig, trackedItemsData } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 
 // Definición de tipos para una mejor tipificación
 interface TrackedItem {
@@ -67,45 +69,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const supabase = createServerSupabaseClient();
-    
     // Obtener todos los items a trackear
-    const { data: trackedItems, error: trackedError } = await supabase
-      .from('tracked_items_config')
-      .select('id, item_id, store_id');
-
-    if (trackedError) {
-      console.error('Error fetching tracked items:', trackedError);
-      return NextResponse.json({ error: 'Error fetching tracked items' }, { status: 500 });
-    }
+    const trackedItems = await db.select({
+      id: trackedItemsConfig.id,
+      item_id: trackedItemsConfig.item_id,
+      store_id: trackedItemsConfig.store_id,
+    })
+      .from(trackedItemsConfig);
 
     if (!trackedItems || trackedItems.length === 0) {
-      return NextResponse.json({ 
-        success: true, 
-        message: 'No tracked items found' 
+      return NextResponse.json({
+        success: true,
+        message: 'No tracked items found'
       });
     }
 
     // Agrupar por tienda para usar los tokens correctos
     const itemsByStore: Record<string, TrackedItem[]> = {};
-    trackedItems.forEach((item: TrackedItem) => {
-      if (!itemsByStore[item.store_id]) {
-        itemsByStore[item.store_id] = [];
+    trackedItems.forEach((item) => {
+      const sid = item.store_id!;
+      if (!itemsByStore[sid]) {
+        itemsByStore[sid] = [];
       }
-      itemsByStore[item.store_id].push(item);
+      itemsByStore[sid].push({
+        id: item.id,
+        item_id: item.item_id!,
+        store_id: sid
+      });
     });
 
     // Procesar cada tienda
     const results: ProcessResult[] = [];
     for (const storeId of Object.keys(itemsByStore)) {
       // Obtener token para la tienda
-      const { data: storeData, error: storeError } = await supabase
-        .from('stores')
-        .select('access_token, token_expiry')
-        .eq('id', storeId)
-        .single();
-        
-      if (storeError || !storeData) {
+      const [storeData] = await db.select({
+        access_token: stores.access_token,
+        token_expiry: stores.token_expiry,
+      })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+
+      if (!storeData) {
         results.push({
           store_id: storeId,
           error: 'Store not found or no access token',
@@ -113,9 +118,9 @@ export async function POST(request: NextRequest) {
         });
         continue;
       }
-      
+
       // Verificar si el token ha expirado
-      if (new Date(storeData.token_expiry) < new Date()) {
+      if (new Date(storeData.token_expiry!) < new Date()) {
         results.push({
           store_id: storeId,
           error: 'Token expired',
@@ -123,23 +128,23 @@ export async function POST(request: NextRequest) {
         });
         continue;
       }
-      
+
       // Procesar items de esta tienda en lotes
       const items = itemsByStore[storeId];
       const batchSize = 10;
       let processed = 0;
-      
+
       for (let i = 0; i < items.length; i += batchSize) {
         const batch = items.slice(i, i + batchSize);
         const batchResults = await Promise.allSettled(
           batch.map(async (item) => {
             try {
               // Obtener datos del item desde la API de ML
-              const { itemData, salePriceData, sellerNickname } = await fetchItemData(item.item_id, storeData.access_token);
-              
+              const { itemData, salePriceData, sellerNickname } = await fetchItemData(item.item_id, storeData.access_token!);
+
               // Guardar en tracked_items_data
-              await saveItemData(supabase, item.id, { itemData, salePriceData, sellerNickname });
-              
+              await saveItemData(item.id, { itemData, salePriceData, sellerNickname });
+
               return { success: true } as ItemProcessResult;
             } catch (error) {
               console.error(`Error processing item ${item.item_id}:`, error);
@@ -147,18 +152,18 @@ export async function POST(request: NextRequest) {
             }
           })
         );
-        
+
         // Contar los éxitos
-        processed += batchResults.filter(r => 
+        processed += batchResults.filter(r =>
           r.status === 'fulfilled' && (r.value as ItemProcessResult).success
         ).length;
-        
+
         // Pausa para no sobrecargar la API
         if (i + batchSize < items.length) {
           await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
-      
+
       results.push({
         store_id: storeId,
         processed,
@@ -177,8 +182,8 @@ export async function POST(request: NextRequest) {
 }
 
 // Función para obtener datos de un item desde la API de ML
-async function fetchItemData(itemId: string, accessToken: string): Promise<{ 
-  itemData: ItemData; 
+async function fetchItemData(itemId: string, accessToken: string): Promise<{
+  itemData: ItemData;
   salePriceData: SalePriceData | null;
   sellerNickname: string;
 }> {
@@ -193,7 +198,7 @@ async function fetchItemData(itemId: string, accessToken: string): Promise<{
   }
 
   const itemData = await itemResponse.json() as ItemData;
-  
+
   // Obtener información del vendedor
   let sellerNickname = '';
   try {
@@ -202,7 +207,7 @@ async function fetchItemData(itemId: string, accessToken: string): Promise<{
         'Authorization': `Bearer ${accessToken}`
       }
     });
-    
+
     if (sellerResponse.ok) {
       const sellerData = await sellerResponse.json();
       sellerNickname = sellerData.nickname || '';
@@ -211,7 +216,7 @@ async function fetchItemData(itemId: string, accessToken: string): Promise<{
     console.error(`Error fetching seller info for item ${itemId}:`, error);
     // Continuamos incluso si hay error al obtener datos del vendedor
   }
-  
+
   // Obtener información del precio de venta
   const salePriceResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}/sale_price`, {
     headers: {
@@ -223,40 +228,37 @@ async function fetchItemData(itemId: string, accessToken: string): Promise<{
   if (salePriceResponse.ok) {
     salePriceData = await salePriceResponse.json() as SalePriceData;
   }
-  
+
   return { itemData, salePriceData, sellerNickname };
 }
 
 // Función para guardar datos en tracked_items_data
 async function saveItemData(
-  supabase: any,
-  configId: string, 
-  { itemData, salePriceData, sellerNickname }: { 
-    itemData: ItemData; 
+  configId: string,
+  { itemData, salePriceData, sellerNickname }: {
+    itemData: ItemData;
     salePriceData: SalePriceData | null;
     sellerNickname: string;
   }
 ) {
   let brand: string | null = null;
   if (itemData.attributes && Array.isArray(itemData.attributes)) {
-    const brandAttribute = itemData.attributes.find(attr => attr.id === 'BRAND'); 
+    const brandAttribute = itemData.attributes.find(attr => attr.id === 'BRAND');
     if (brandAttribute && brandAttribute.value_name) {
       brand = brandAttribute.value_name;
     }
   }
 
   // Actualizar también la información del vendedor en tracked_items_config
-  await supabase
-    .from('tracked_items_config')
-    .update({
+  await db.update(trackedItemsConfig)
+    .set({
       seller_id: itemData.seller_id,
       seller_nickname: sellerNickname
     })
-    .eq('id', configId);
+    .where(eq(trackedItemsConfig.id, configId));
 
-  return supabase
-    .from('tracked_items_data')
-    .insert({
+  await db.insert(trackedItemsData)
+    .values({
       config_id: configId,
       item_id: itemData.id,
       site_id: itemData.site_id,
@@ -265,17 +267,17 @@ async function saveItemData(
       seller_nickname: sellerNickname,
       category_id: itemData.category_id,
       official_store_id: itemData.official_store_id,
-      price: itemData.price,
-      base_price: itemData.base_price,
+      price: itemData.price?.toString(),
+      base_price: itemData.base_price?.toString(),
       currency_id: itemData.currency_id,
       available_quantity: itemData.available_quantity,
       permalink: itemData.permalink,
       thumbnail: itemData.thumbnail,
       status: itemData.status,
-      regular_amount: salePriceData?.regular_amount || null,
-      amount: salePriceData?.amount || null,
+      regular_amount: salePriceData?.regular_amount?.toString() || null,
+      amount: salePriceData?.amount?.toString() || null,
       brand: brand,
-      last_updated: new Date().toISOString(),
-      created_at: new Date().toISOString()
+      last_updated: new Date(),
+      created_at: new Date()
     });
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { users, items, stores } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
 export const maxDuration = 20; // Reduced from 59 to 20 seconds to save costs
@@ -14,7 +16,7 @@ function determineInstallmentsQuantity(listingTypeId: string, tags: string[]): n
     if (tags.includes("cuota-simple-paid-by-buyer")) return 1; // Vendedor tiene habilitado Cuota Simple
     return 1; // No quiere agregar cuotas
   }
-  
+
   if (listingTypeId === "gold_pro") {
     // Por defecto 6 cuotas para gold_pro
     if (tags.includes("3x_campaign")) return 3; // 3 cuotas al mismo precio que publicaste
@@ -25,7 +27,7 @@ function determineInstallmentsQuantity(listingTypeId: string, tags: string[]): n
     if (tags.includes("12x_campaign")) return 12; // 12 cuotas al mismo precio que publicaste
     return 6; // Valor por defecto para gold_pro
   }
-  
+
   return 1; // Valor por defecto para otros tipos de listing
 }
 
@@ -44,15 +46,15 @@ function determineFreeShipping(shippingData: any): boolean {
  */
 async function getFeeDetails(
   accessToken: string,
-  price: number, 
-  categoryId: string, 
-  tags: string[], 
+  price: number,
+  categoryId: string,
+  tags: string[],
   listingTypeId: string
 ): Promise<any> {
   try {
     const tagsString = tags.join(',');
     const siteId = 'MLA'; // Asumiendo que es Argentina
-    
+
     const response = await fetch(
       `https://api.mercadolibre.com/sites/${siteId}/listing_prices?price=${price}&category_id=${categoryId}&tags=${tagsString}&listing_type_id=${listingTypeId}`,
       {
@@ -74,7 +76,7 @@ async function getFeeDetails(
     }
 
     const data = await response.json();
-    
+
     return {
       meli_percentage_fee: data.sale_fee_details?.meli_percentage_fee || 0,
       percentage_fee: data.sale_fee_details?.percentage_fee || 0,
@@ -118,7 +120,7 @@ async function getShippingCosts(itemId: string, userId: string, accessToken: str
     }
 
     const data = await response.json();
-    
+
     // Extraer los datos que nos interesan
     return {
       shipping_list_cost: data.coverage?.all_country?.list_cost || null,
@@ -215,7 +217,7 @@ async function getCampaignInfo(itemId: string, accessToken: string): Promise<any
     const itemPromotionData = await itemPromotionResponse.json();
 
     const itemPromotion = itemPromotionData.results[0];
-    
+
     return {
       promotion_id: promotionId,
       campaign_type: promotionType,
@@ -237,35 +239,30 @@ export async function POST(request: NextRequest) {
   try {
     // Verificar autenticación
     const mlUserId = (await cookies()).get('ml_user_id')?.value;
-    
+
     if (!mlUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // Obtener el itemId del cuerpo de la solicitud
     const { itemId } = await request.json();
-    
+
     if (!itemId) {
       return NextResponse.json({ error: 'Item ID is required' }, { status: 400 });
     }
 
-    // Obtener el token de acceso del usuario desde la base de datos
-    const supabase = createServerSupabaseClient();
-    
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id, access_token, token_expiry')
-      .eq('user_id', mlUserId)
-      .single();
+    // Obtener el token de acceso de la tienda desde la base de datos
+    const [storeData] = await db.select({ id: stores.id, access_token: stores.access_token, token_expiry: stores.token_expiry }).from(stores).where(eq(stores.ml_user_id, Number(mlUserId))).limit(1);
 
-    if (userError || !userData) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    if (!storeData) {
+      return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
     // Verificar si el token ha expirado
-    if (new Date(userData.token_expiry) < new Date()) {
+    if (storeData.token_expiry && new Date(storeData.token_expiry) < new Date()) {
       return NextResponse.json({ error: 'Token expired, please re-authenticate' }, { status: 401 });
     }
+    const userData = storeData;
 
     // Hacer la solicitud a la API de Mercado Libre para obtener la información del ítem
     const itemResponse = await fetch(`https://api.mercadolibre.com/items/${itemId}`, {
@@ -291,7 +288,7 @@ export async function POST(request: NextRequest) {
           'Authorization': `Bearer ${userData.access_token}`
         }
       });
-      
+
       if (sellerResponse.ok) {
         const sellerData = await sellerResponse.json();
         sellerNickname = sellerData.nickname || '';
@@ -315,28 +312,28 @@ export async function POST(request: NextRequest) {
 
     // Determinar free_shipping
     const freeShipping = determineFreeShipping(itemData.shipping || {});
-    
+
     // Determinar installments_quantity
     const installmentsQuantity = determineInstallmentsQuantity(
       itemData.listing_type_id,
       itemData.tags || []
     );
-    
+
     // Obtener detalles de tarifas
     const price = salePriceData?.amount || itemData.price;
     const feeDetails = await getFeeDetails(
-      userData.access_token,
+      userData.access_token!,
       price,
       itemData.category_id,
       itemData.tags || [],
       itemData.listing_type_id
     );
-    
+
     // Obtener costos de envío
-    const shippingCosts = await getShippingCosts(itemId, mlUserId, userData.access_token);
-    
+    const shippingCosts = await getShippingCosts(itemId, mlUserId, userData.access_token!);
+
     // Obtener información de campaña
-    const campaignInfo = await getCampaignInfo(itemId, userData.access_token);
+    const campaignInfo = await getCampaignInfo(itemId, userData.access_token!);
 
     // Crear el objeto de item que vamos a guardar
     const itemToSave = {
@@ -379,26 +376,16 @@ export async function POST(request: NextRequest) {
       campaign_type: campaignInfo.campaign_type,
       meli_percentage_cashback: campaignInfo.meli_percentage_cashback,
       seller_percentage: campaignInfo.seller_percentage,
-      last_updated: new Date().toISOString()
+      last_updated: new Date()
     };
 
     // Crear o actualizar el ítem en la base de datos
-    const { data: existingItem } = await supabase
-      .from('items')
-      .select('id')
-      .eq('item_id', itemId)
-      .eq('user_id', userData.id)
-      .single();
+    const [existingItem] = await db.select({ id: items.id }).from(items).where(and(eq(items.item_id, itemId), eq(items.user_id, userData.id))).limit(1);
 
     if (existingItem) {
-      await supabase
-        .from('items')
-        .update(itemToSave)
-        .eq('id', existingItem.id);
+      await db.update(items).set(itemToSave).where(eq(items.id, existingItem.id));
     } else {
-      await supabase
-        .from('items')
-        .insert(itemToSave);
+      await db.insert(items).values(itemToSave);
     }
 
     return NextResponse.json({

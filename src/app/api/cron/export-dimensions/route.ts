@@ -1,6 +1,8 @@
 // src/app/api/cron/export-dimensions-v2/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores } from '@/lib/db/schema';
+import { and, gt, ne, eq, asc } from 'drizzle-orm';
 import { getSheetsClient } from '@/lib/googleSheetsClient';
 
 export const maxDuration = 300; // 5 minutos máximo (Pro plan limit)
@@ -8,7 +10,7 @@ export const maxDuration = 300; // 5 minutos máximo (Pro plan limit)
 // Palabras clave para identificar atributos de dimensiones
 const DIMENSION_KEYWORDS = [
   // Dimensiones básicas en inglés
-  'DEPTH', 'WIDTH', 'HEIGHT', 'LENGTH', 
+  'DEPTH', 'WIDTH', 'HEIGHT', 'LENGTH',
   'DIAMETER', 'THICKNESS', 'SIZE', 'DIMENSION',
   // Dimensiones básicas en español
   'ALTO', 'ANCHO', 'LARGO', 'PROFUNDIDAD',
@@ -34,19 +36,19 @@ function isDimensionAttribute(attributeId: string): boolean {
 // Función para extraer valor de dimensión formateado
 function extractDimensionValue(attribute: any): string {
   if (!attribute.values || attribute.values.length === 0) return '';
-  
+
   const value = attribute.values[0];
-  
+
   // Si tiene estructura con número y unidad
   if (value.struct && value.struct.number !== undefined) {
     return `${value.struct.number} ${value.struct.unit || ''}`.trim();
   }
-  
+
   // Si es solo un string pero value_name está presente
   if (attribute.value_name) {
     return attribute.value_name;
   }
-  
+
   // Si es solo un string en value.name
   return value.name || '';
 }
@@ -54,7 +56,7 @@ function extractDimensionValue(attribute: any): string {
 // Función para formatear todos los atributos con separador |
 function formatAllAttributes(attributes: any[]): string {
   if (!attributes || attributes.length === 0) return '';
-  
+
   const formattedAttrs = attributes
     .filter(attr => attr.value_name && attr.value_name.trim() !== '') // Filtrar vacíos
     .map(attr => {
@@ -66,7 +68,7 @@ function formatAllAttributes(attributes: any[]): string {
     })
     .filter(value => value && value.trim() !== '') // Filtrar valores vacíos
     .join(' | ');
-    
+
   return formattedAttrs;
 }
 
@@ -119,7 +121,7 @@ async function getFeeDetails(
         sale_fee_amount: 0
       };
     }
-    
+
     const response = await fetch(
       `https://api.mercadolibre.com/sites/MLA/listing_prices?price=${price}&listing_type_id=${listingTypeId}&category_id=${categoryId}`,
       {
@@ -144,7 +146,7 @@ async function getFeeDetails(
     }
 
     const data = await response.json();
-    
+
     return {
       meli_percentage_fee: data.sale_fee_details?.meli_percentage_fee || 0,
       percentage_fee: data.sale_fee_details?.percentage_fee || 0,
@@ -181,7 +183,7 @@ async function getProductReviews(itemId: string, accessToken: string): Promise<a
     }
 
     const data = await response.json();
-    
+
     return {
       total_reviews: data.paging?.total || 0,
       rating_average: data.rating_average || 0
@@ -223,7 +225,7 @@ async function getShippingCosts(
     }
 
     const data = await response.json();
-    
+
     return {
       shipping_list_cost: data.coverage?.all_country?.list_cost || null,
       shipping_discount_rate: data.coverage?.all_country?.discount?.rate || null,
@@ -252,7 +254,7 @@ async function getAllItemsFromML(userId: string, accessToken: string): Promise<s
     try {
       callCount++;
       let url: string;
-      
+
       if (!scrollId) {
         // Primera llamada - usar search_type=scan
         url = `https://api.mercadolibre.com/users/${userId}/items/search?search_type=scan&limit=${limit}`;
@@ -262,7 +264,7 @@ async function getAllItemsFromML(userId: string, accessToken: string): Promise<s
         url = `https://api.mercadolibre.com/users/${userId}/items/search?search_type=scan&scroll_id=${scrollId}`;
         console.log(`   Call ${callCount}: Using scroll_id`);
       }
-      
+
       const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${accessToken}`
@@ -276,13 +278,13 @@ async function getAllItemsFromML(userId: string, accessToken: string): Promise<s
       }
 
       const data = await response.json();
-      
+
       // Extraer el scroll_id para la siguiente llamada
       if (data.scroll_id) {
         scrollId = data.scroll_id;
         console.log(`   ✓ Got scroll_id for next call`);
       }
-      
+
       if (data.results && data.results.length > 0) {
         allItemIds.push(...data.results);
         console.log(`   ✓ Fetched ${data.results.length} items (total so far: ${allItemIds.length})`);
@@ -299,13 +301,13 @@ async function getAllItemsFromML(userId: string, accessToken: string): Promise<s
 
       // Pausa entre requests (importante para scan)
       await new Promise(resolve => setTimeout(resolve, 200));
-      
+
       // Safety check para evitar loops infinitos
       if (callCount > 100) {
         console.log(`   ⚠️ Safety break - too many calls (${callCount})`);
         break;
       }
-      
+
     } catch (error) {
       console.error('   ❌ Error in scan process:', error);
       break;
@@ -317,32 +319,33 @@ async function getAllItemsFromML(userId: string, accessToken: string): Promise<s
 }
 
 // Función para refrescar el access token si es necesario
-async function refreshTokenIfNeeded(storeId: string, supabase: any): Promise<{ accessToken: string; isValid: boolean }> {
+async function refreshTokenIfNeeded(storeId: string): Promise<{ accessToken: string; isValid: boolean }> {
   try {
-    const { data: store, error } = await supabase
-      .from('stores')
-      .select('access_token, token_expiry')
-      .eq('id', storeId)
-      .single();
+    const [store] = await db.select({
+      access_token: stores.access_token,
+      token_expiry: stores.token_expiry,
+    }).from(stores)
+      .where(eq(stores.id, storeId))
+      .limit(1);
 
-    if (error || !store) {
-      console.error('Error fetching store token:', error);
+    if (!store) {
+      console.error('Error fetching store token');
       return { accessToken: '', isValid: false };
     }
 
     // Verificar si el token sigue siendo válido (con 5 minutos de margen)
-    const tokenExpiry = new Date(store.token_expiry);
+    const tokenExpiry = new Date(store.token_expiry!);
     const now = new Date();
     const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
 
     if (tokenExpiry > fiveMinutesFromNow) {
-      return { accessToken: store.access_token, isValid: true };
+      return { accessToken: store.access_token!, isValid: true };
     }
 
     // Si el token está por expirar o expiró, deberíamos refrescarlo
     // Por ahora solo retornamos el token actual y marcamos como inválido
     console.log(`Token for store ${storeId} is expiring soon or expired`);
-    return { accessToken: store.access_token, isValid: false };
+    return { accessToken: store.access_token!, isValid: false };
   } catch (error) {
     console.error('Error in refreshTokenIfNeeded:', error);
     return { accessToken: '', isValid: false };
@@ -374,12 +377,12 @@ export async function GET(request: NextRequest) {
   console.log('===========================================');
   console.log('Starting export-dimensions-v2 at:', new Date().toISOString());
   console.log('===========================================');
-  
+
   try {
     // Verificar autorización - solo para llamadas manuales
     const authHeader = request.headers.get('authorization');
     const apiSecret = process.env.NEXT_PUBLIC_API_SECRET_KEY;
-    
+
     // Para llamadas de Vercel Cron - no requiere auth (es intrínsecamente seguro)
     // Para llamadas manuales - valida usando API_SECRET_KEY
     if (authHeader && apiSecret && authHeader === `Bearer ${apiSecret}`) {
@@ -393,89 +396,86 @@ export async function GET(request: NextRequest) {
       console.log('Vercel Cron call (no auth header required)');
     }
 
-    const supabase = createServerSupabaseClient();
-    
     // Obtener todas las tiendas activas con tokens válidos (excluyendo tienda de prueba)
-    const { data: stores, error: storesError } = await supabase
-      .from('stores')
-      .select('id, store_id, ml_user_id, access_token, token_expiry, name')
-      .gt('token_expiry', new Date().toISOString())
-      .neq('store_id', '405011859')  // Excluir tienda de prueba
-      .order('store_id');
+    const activeStores = await db.select({
+      id: stores.id,
+      store_id: stores.store_id,
+      ml_user_id: stores.ml_user_id,
+      access_token: stores.access_token,
+      token_expiry: stores.token_expiry,
+      name: stores.name,
+    }).from(stores)
+      .where(and(gt(stores.token_expiry, new Date()), ne(stores.store_id, '405011859')))
+      .orderBy(asc(stores.store_id));
 
-    if (storesError) {
-      console.error('Error fetching stores:', storesError);
-      return NextResponse.json({ error: 'Error fetching stores' }, { status: 500 });
-    }
-
-    if (!stores || stores.length === 0) {
-      return NextResponse.json({ 
-        success: true, 
-        message: 'No active stores found' 
+    if (!activeStores || activeStores.length === 0) {
+      return NextResponse.json({
+        success: true,
+        message: 'No active stores found'
       });
     }
 
-    console.log(`Processing ${stores.length} stores for dimension export V2`);
+    console.log(`Processing ${activeStores.length} stores for dimension export V2`);
 
     // Preparar el spreadsheet
     const SPREADSHEET_ID = process.env.DIMENSIONS_SPREADSHEET_ID || '1uESNvCVtMssb56eop9FhisZPNLMPssUDdhonmXI_2b0';
     const sheets = getSheetsClient();
-    
+
     // Almacenar todos los datos de las tiendas
     const allStoresData = [];
-    
+
     // Procesar cada tienda
-    for (const store of stores) {
+    for (const store of activeStores) {
       try {
         console.log(`Processing store: ${store.store_id} - ${store.name}`);
         console.log(`   Token preview: ${store.access_token?.substring(0, 20)}...`);
-        
+
         // Verificar si el token sigue siendo válido
-        const { accessToken, isValid } = await refreshTokenIfNeeded(store.id, supabase);
-        
+        const { accessToken, isValid } = await refreshTokenIfNeeded(store.id);
+
         if (!isValid) {
           console.log(`Skipping store ${store.store_id} due to expired token`);
           continue;
         }
-        
+
         console.log(`   Using token: ${accessToken?.substring(0, 20)}... (valid: ${isValid})`);
         console.log(`   Original token: ${store.access_token?.substring(0, 20)}...`);
-        
+
         // Obtener TODOS los IDs de productos activos desde ML
         console.log(`\n📦 Fetching all items for store ${store.store_id} from ML API...`);
         const itemFetchStart = Date.now();
-        const allItemIds = await getAllItemsFromML(store.ml_user_id, accessToken);
+        const allItemIds = await getAllItemsFromML(String(store.ml_user_id), accessToken);
         console.log(`   ✅ Fetched in ${((Date.now() - itemFetchStart) / 1000).toFixed(1)}s`);
-        
+
         if (allItemIds.length === 0) {
           console.log(`❌ No items found for store ${store.store_id}`);
           continue;
         }
-        
+
         console.log(`✅ Found ${allItemIds.length} items for store ${store.store_id}`);
-        
+
         // Mostrar los primeros 5 item IDs para debug
         console.log(`   First 5 items: ${allItemIds.slice(0, 5).join(', ')}`);
-        
+
         // Procesar items en lotes usando Multiget (máximo 20 según documentación ML)
         const batchSize = 20;
         const storeItemsData = [];
         let processedCount = 0;
         let actuallyProcessed = 0;
-        
+
         for (let i = 0; i < allItemIds.length; i += batchSize) {
           const batch = allItemIds.slice(i, i + batchSize);
           const itemIdsString = batch.join(',');
           processedCount += batch.length;
-          
+
           // Log de progreso cada 100 items
           if (processedCount % 100 === 0 || processedCount === allItemIds.length) {
             const elapsed = ((Date.now() - itemFetchStart) / 1000).toFixed(1);
             const progress = ((processedCount / allItemIds.length) * 100).toFixed(1);
             console.log(`  ⏳ Processing items ${processedCount}/${allItemIds.length} (${progress}%) - ${elapsed}s elapsed`);
-            
+
             // Verificar token cada 100 items procesados
-            const { accessToken: newToken, isValid: stillValid } = await refreshTokenIfNeeded(store.id, supabase);
+            const { accessToken: newToken, isValid: stillValid } = await refreshTokenIfNeeded(store.id);
             if (!stillValid) {
               console.log(`Token expired while processing store ${store.store_id}`);
               break;
@@ -484,14 +484,14 @@ export async function GET(request: NextRequest) {
               console.log(`Token refreshed for store ${store.store_id}`);
             }
           }
-          
+
           try {
             // Debug: Mostrar token y URL para el primer batch
             if (processedCount <= batchSize) {
               console.log(`   🔍 DEBUG - Using token: ${accessToken?.substring(0, 20)}...`);
               console.log(`   🔍 DEBUG - URL: https://api.mercadolibre.com/items?ids=${itemIdsString.substring(0, 50)}...`);
             }
-            
+
             // Obtener detalles completos de los items (sin attributes=all para evitar problemas)
             const response = await fetch(`https://api.mercadolibre.com/items?ids=${itemIdsString}`, {
               headers: {
@@ -516,11 +516,11 @@ export async function GET(request: NextRequest) {
             // Procesar cada item EN PARALELO (para fees y shipping)
             let validItemsInBatch = 0;
             const skippedReasons = { noBody: 0, emptyBody: 0, noId: 0, errorCode: 0 };
-            
+
             // Procesar items del lote en paralelo
             const itemProcessingPromises = itemsData.map(async (itemResponse: any) => {
               const processedItems: any[] = [];
-              
+
               // Verificar código de respuesta
               if (itemResponse.code !== 200) {
                 skippedReasons.errorCode++;
@@ -529,7 +529,7 @@ export async function GET(request: NextRequest) {
                 }
                 return processedItems;
               }
-              
+
               // Verificar si tiene body
               if (!itemResponse.body) {
                 skippedReasons.noBody++;
@@ -538,9 +538,9 @@ export async function GET(request: NextRequest) {
                 }
                 return processedItems;
               }
-              
+
               const itemData = itemResponse.body;
-              
+
               // Verificar si el body está vacío
               if (Object.keys(itemData).length === 0) {
                 skippedReasons.emptyBody++;
@@ -549,7 +549,7 @@ export async function GET(request: NextRequest) {
                 }
                 return processedItems;
               }
-              
+
               // Verificar si tiene ID
               if (!itemData.id) {
                 skippedReasons.noId++;
@@ -558,14 +558,14 @@ export async function GET(request: NextRequest) {
                 }
                 return processedItems;
               }
-              
+
               // Calcular campos de comisiones y envío
               const freeShipping = determineFreeShipping(itemData.shipping || {});
               const installmentsQuantity = determineInstallmentsQuantity(
                 itemData.listing_type_id || '',
                 itemData.tags || []
               );
-              
+
               // Obtener detalles de comisiones, envío y reviews EN PARALELO
               const [feeDetails, shippingCosts, reviewsData] = await Promise.all([
                 getFeeDetails(
@@ -577,7 +577,7 @@ export async function GET(request: NextRequest) {
                 ),
                 getShippingCosts(
                   itemData.id,
-                  store.ml_user_id,
+                  String(store.ml_user_id),
                   accessToken
                 ),
                 getProductReviews(
@@ -585,18 +585,18 @@ export async function GET(request: NextRequest) {
                   accessToken
                 )
               ]);
-              
+
               // Pausa más corta ya que las llamadas fueron en paralelo
               await new Promise(resolve => setTimeout(resolve, 50));
-              
+
               // Extraer SKU de múltiples fuentes posibles (orden de prioridad)
               let sku = '';
-              
+
               // 1. seller_custom_field (más común)
               if (itemData.seller_custom_field) {
                 sku = itemData.seller_custom_field;
               }
-              
+
               // 2. Buscar en attributes SELLER_SKU
               if (!sku && itemData.attributes) {
                 const skuAttribute = itemData.attributes.find((attr: any) => attr.id === 'SELLER_SKU');
@@ -604,17 +604,17 @@ export async function GET(request: NextRequest) {
                   sku = skuAttribute.value_name;
                 }
               }
-              
+
               // 3. Buscar en user_product_id (a veces tiene SKU)
               if (!sku && itemData.user_product_id) {
                 sku = itemData.user_product_id;
               }
-              
+
               // 4. Buscar en inventory_id (puede contener SKU)
               if (!sku && itemData.inventory_id) {
                 sku = itemData.inventory_id;
               }
-              
+
               // 5. Si tiene variations, consultar el endpoint específico de la primera variante
               if (!sku && itemData.variations && itemData.variations.length > 0) {
                 const firstVariation = itemData.variations[0];
@@ -628,7 +628,7 @@ export async function GET(request: NextRequest) {
                         'Authorization': `Bearer ${accessToken}`
                       }
                     });
-                    
+
                     if (varResponse.ok) {
                       const varData = await varResponse.json();
                       // Buscar SKU en seller_custom_field primero
@@ -648,7 +648,7 @@ export async function GET(request: NextRequest) {
                   }
                 }
               }
-              
+
               // Debug temporal: mostrar fuentes de SKU para items sin SKU
               if (!sku && processedCount <= batchSize) {
                 console.log(`   🔍 SKU DEBUG for ${itemData.id}:`);
@@ -661,10 +661,10 @@ export async function GET(request: NextRequest) {
                   console.log(`     - SELLER_SKU attribute: ${skuAttr?.value_name || 'not found'}`);
                 }
               }
-              
+
               // Para productos sin variaciones, dejar atributos en blanco
               const allAttributes = '';
-              
+
               // Extraer datos básicos + dimensiones + campos nuevos
               const dimensionData: any = {
                 store_id: store.ml_user_id,
@@ -673,7 +673,7 @@ export async function GET(request: NextRequest) {
                 variation_id: '', // Producto principal sin variación
                 title: itemData.title || '',
                 sku: sku,
-                
+
                 // Campos básicos del producto
                 status: itemData.status || '',
                 available_quantity: itemData.available_quantity || 0,
@@ -683,19 +683,19 @@ export async function GET(request: NextRequest) {
                 permalink: itemData.permalink || '',
                 date_created: itemData.date_created || '',
                 last_updated: itemData.last_updated || '',
-                
+
                 // Atributos del producto formateados
                 all_attributes: allAttributes,
-                
+
                 // Reviews
                 total_reviews: reviewsData.total_reviews,
                 rating_average: reviewsData.rating_average,
-                
+
                 // Envío
                 shipping_mode: itemData.shipping?.mode || '',
                 logistic_type: itemData.shipping?.logistic_type || '',
                 free_shipping: freeShipping,
-                
+
                 // Comisiones y pagos
                 installments_quantity: installmentsQuantity,
                 sale_fee_amount: feeDetails.sale_fee_amount,
@@ -703,7 +703,7 @@ export async function GET(request: NextRequest) {
                 meli_percentage_fee: feeDetails.meli_percentage_fee,
                 financing_add_on_fee: feeDetails.financing_add_on_fee,
                 fixed_fee: feeDetails.fixed_fee,
-                
+
                 // Costos de envío
                 shipping_list_cost: shippingCosts.shipping_list_cost,
                 shipping_discount_rate: shippingCosts.shipping_discount_rate,
@@ -714,13 +714,13 @@ export async function GET(request: NextRequest) {
 
               // Agregar el item al array de procesados
               processedItems.push(dimensionData);
-              
+
               // Procesar variaciones si existen
               if (itemData.variations && Array.isArray(itemData.variations)) {
                 for (const variation of itemData.variations) {
                   // SKU para variantes: buscar en múltiples fuentes
                   let variantSku = '';
-                  
+
                   // 1. SKU específico de la variante
                   if (variation.seller_custom_field) {
                     variantSku = variation.seller_custom_field;
@@ -744,7 +744,7 @@ export async function GET(request: NextRequest) {
                           'Authorization': `Bearer ${accessToken}`
                         }
                       });
-                      
+
                       if (varResponse.ok) {
                         const varData = await varResponse.json();
                         // Buscar SKU en seller_custom_field primero
@@ -767,7 +767,7 @@ export async function GET(request: NextRequest) {
                   if (!variantSku) {
                     variantSku = itemData.seller_custom_field || itemData.user_product_id || itemData.inventory_id || '';
                   }
-                  
+
                   // Formatear atributos de la variación desde attribute_combinations
                   let variantAttributes = '';
                   if (variation.attribute_combinations && variation.attribute_combinations.length > 0) {
@@ -776,7 +776,7 @@ export async function GET(request: NextRequest) {
                       .filter((v: string) => v)
                       .join(' | ');
                   }
-                  
+
                   const variantData: any = {
                     store_id: store.ml_user_id,
                     store_name: store.name || store.store_id,
@@ -784,7 +784,7 @@ export async function GET(request: NextRequest) {
                     variation_id: variation.id || '', // ID de la variación
                     title: `${itemData.title} - ${variation.attribute_combinations?.map((ac: any) => ac.value_name).join(' ')}`,
                     sku: variantSku,
-                    
+
                     // Campos básicos del producto (iguales para variantes)
                     status: itemData.status || '',
                     available_quantity: variation.available_quantity || 0,
@@ -794,19 +794,19 @@ export async function GET(request: NextRequest) {
                     permalink: itemData.permalink || '',
                     date_created: itemData.date_created || '',
                     last_updated: itemData.last_updated || '',
-                    
+
                     // Atributos del producto (específicos de la variante)
                     all_attributes: variantAttributes,
-                    
+
                     // Reviews (iguales para variantes)
                     total_reviews: reviewsData.total_reviews,
                     rating_average: reviewsData.rating_average,
-                    
+
                     // Envío
                     shipping_mode: itemData.shipping?.mode || '',
                     logistic_type: itemData.shipping?.logistic_type || '',
                     free_shipping: freeShipping,
-                    
+
                     // Comisiones y pagos (iguales para variantes)
                     installments_quantity: installmentsQuantity,
                     sale_fee_amount: feeDetails.sale_fee_amount,
@@ -814,25 +814,25 @@ export async function GET(request: NextRequest) {
                     meli_percentage_fee: feeDetails.meli_percentage_fee,
                     financing_add_on_fee: feeDetails.financing_add_on_fee,
                     fixed_fee: feeDetails.fixed_fee,
-                    
+
                     // Costos de envío
                     shipping_list_cost: shippingCosts.shipping_list_cost,
                     shipping_discount_rate: shippingCosts.shipping_discount_rate,
                     shipping_promoted_amount: shippingCosts.shipping_promoted_amount
                   };
-                  
+
                   // No procesamos dimensiones en esta versión
-                  
+
                   processedItems.push(variantData);
                 }
               }
-              
+
               return processedItems; // Retorna array de items procesados
             });
 
             // Esperar a que todos los items del lote se procesen en paralelo
             const batchResults = await Promise.all(itemProcessingPromises);
-            
+
             // Agregar todos los items procesados válidos a storeItemsData
             for (const items of batchResults) {
               if (items && items.length > 0) {
@@ -861,7 +861,7 @@ export async function GET(request: NextRequest) {
             continue;
           }
         }
-        
+
         // Agregar los datos de esta tienda al conjunto global
         allStoresData.push(...storeItemsData);
         const storeElapsed = ((Date.now() - itemFetchStart) / 1000).toFixed(1);
@@ -871,7 +871,7 @@ export async function GET(request: NextRequest) {
         console.log(`   - Total rows (including variants): ${storeItemsData.length}`);
         console.log(`   - Time taken: ${storeElapsed}s`);
         console.log(`   - Total items so far: ${allStoresData.length}`);
-        
+
       } catch (error) {
         console.error(`Error processing store ${store.store_id}:`, error);
         continue;
@@ -887,21 +887,21 @@ export async function GET(request: NextRequest) {
     }
 
     // No procesamos atributos de dimensiones en esta versión
-    
+
     // Crear los encabezados con el nuevo orden especificado
     const headers = [
-      'Tienda ID', 
-      'Tienda Nombre', 
-      'ID Producto', 
+      'Tienda ID',
+      'Tienda Nombre',
+      'ID Producto',
       'ID Variante',  // Nuevo campo
-      'Estado', 
-      'Título', 
+      'Estado',
+      'Título',
       'SKU',
-      'Total Reviews', 
+      'Total Reviews',
       'Rating Promedio',
       'Atributos',  // attribute_combinations de variantes
       'Publicación',  // listing_type
-      'Precio', 
+      'Precio',
       'Precio Real',  // original_price
       'Tipo Envío',  // shipping_mode
       'Logística',  // logistic_type - nuevo campo
@@ -920,7 +920,7 @@ export async function GET(request: NextRequest) {
       'Última Actualización',
       'URL'
     ];
-    
+
     // No incluir columnas de dimensiones/medidas en esta versión
 
     // Nombre de la hoja fijo
@@ -933,7 +933,7 @@ export async function GET(request: NextRequest) {
           spreadsheetId: SPREADSHEET_ID,
           range: `${SHEET_NAME}!A1`,
         });
-        
+
         // Si existe, limpiarla
         await sheets.spreadsheets.values.clear({
           spreadsheetId: SPREADSHEET_ID,
@@ -955,10 +955,10 @@ export async function GET(request: NextRequest) {
           }
         });
       }
-      
+
       // Preparar las filas de datos
       const rows = [headers];
-      
+
       for (const item of allStoresData) {
         const row = [
           item.store_id || '',
@@ -991,10 +991,10 @@ export async function GET(request: NextRequest) {
           formatToBuenosAires(item.last_updated || new Date().toISOString()),  // Última Actualización
           item.permalink || ''  // URL
         ];
-        
+
         rows.push(row);
       }
-      
+
       // Insertar todos los datos
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
@@ -1004,10 +1004,10 @@ export async function GET(request: NextRequest) {
           values: rows
         }
       });
-      
+
       // Formatear la hoja principal
       const sheetId = await getSheetId(sheets, SPREADSHEET_ID, SHEET_NAME);
-      
+
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
         requestBody: {
@@ -1039,29 +1039,29 @@ export async function GET(request: NextRequest) {
           ]
         }
       });
-      
+
       return NextResponse.json({
         success: true,
         message: 'Dimensions V2 exported successfully',
         stats: {
-          totalStores: stores.length,
+          totalStores: activeStores.length,
           totalItemsProcessed: allStoresData.length,
           sheetName: SHEET_NAME,
           spreadsheetId: SPREADSHEET_ID
         }
       });
-      
+
     } catch (sheetError) {
       console.error('Error writing to Google Sheets:', sheetError);
-      return NextResponse.json({ 
+      return NextResponse.json({
         error: 'Error writing to Google Sheets',
-        message: sheetError instanceof Error ? sheetError.message : 'Unknown error' 
+        message: sheetError instanceof Error ? sheetError.message : 'Unknown error'
       }, { status: 500 });
     }
-    
+
   } catch (error) {
     console.error('Error in cron dimensions export V2:', error);
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: 'Internal server error',
       message: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
@@ -1074,7 +1074,7 @@ async function getSheetId(sheets: any, spreadsheetId: string, sheetName: string)
     const response = await sheets.spreadsheets.get({
       spreadsheetId: spreadsheetId,
     });
-    
+
     const sheet = response.data.sheets.find((s: any) => s.properties.title === sheetName);
     return sheet ? sheet.properties.sheetId : 0;
   } catch (error) {

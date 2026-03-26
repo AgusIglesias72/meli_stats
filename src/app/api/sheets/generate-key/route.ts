@@ -1,6 +1,8 @@
 // src/app/api/sheets/generate-key/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { storeUsers, stores } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 
@@ -8,14 +10,14 @@ export async function POST(request: NextRequest) {
   try {
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
+
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
+
     // Obtener el ID de la tienda seleccionada
     const selectedStoreId = (await cookies()).get('selected_store_id')?.value;
-    
+
     if (!selectedStoreId) {
       return NextResponse.json({ error: 'No store selected' }, { status: 400 });
     }
@@ -24,34 +26,30 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const forceReset = body?.reset === true;
 
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Verificar si el usuario tiene acceso a esta tienda
-    const { data: userAccess, error: accessError } = await supabase
-      .from('store_users')
-      .select('role')
-      .eq('user_id', authUserId)
-      .eq('store_id', selectedStoreId)
-      .single();
+    const [userAccess] = await db.select({ role: storeUsers.role })
+      .from(storeUsers)
+      .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, selectedStoreId)))
+      .limit(1);
 
-    if (accessError || !userAccess) {
+    if (!userAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
     // Verificar si el usuario tiene rol suficiente para generar API key (owner o admin)
-    if (!['owner', 'admin'].includes(userAccess.role)) {
+    if (!['owner', 'admin'].includes(userAccess.role!)) {
       return NextResponse.json({ error: 'You do not have permission to generate API keys' }, { status: 403 });
     }
 
     // Obtener información de la tienda
-    const { data: storeData, error: storeError } = await supabase
-      .from('stores')
-      .select('gsheets_api_key, store_id')
-      .eq('id', selectedStoreId)
-      .single();
+    const [storeData] = await db.select({
+      gsheets_api_key: stores.gsheets_api_key,
+      store_id: stores.store_id,
+    }).from(stores)
+      .where(eq(stores.id, selectedStoreId))
+      .limit(1);
 
-    if (storeError || !storeData) {
+    if (!storeData) {
       return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
@@ -65,21 +63,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Generar una nueva API key
-    const newApiKey = generateApiKey(storeData.store_id);
+    const newApiKey = generateApiKey(storeData.store_id!);
 
     // Actualizar la API key de la tienda
-    const { error: updateError } = await supabase
-      .from('stores')
-      .update({
-        gsheets_api_key: newApiKey,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', selectedStoreId);
-
-    if (updateError) {
-      console.error('Error updating API key:', updateError);
-      return NextResponse.json({ error: 'Failed to update API key' }, { status: 500 });
-    }
+    await db.update(stores).set({
+      gsheets_api_key: newApiKey,
+      updated_at: new Date()
+    }).where(eq(stores.id, selectedStoreId));
 
     return NextResponse.json({
       apiKey: newApiKey,
@@ -100,10 +90,10 @@ function generateApiKey(storeId: string): string {
   const randomBytes = crypto.randomBytes(16).toString('hex');
   const timestamp = Date.now().toString();
   const baseString = `${storeId}-${timestamp}-${randomBytes}`;
-  
+
   // Generar un hash SHA-256 del string base
   const hash = crypto.createHash('sha256').update(baseString).digest('hex');
-  
+
   // Devolver los primeros 32 caracteres del hash para una API key más manejable
   return hash.substring(0, 32);
 }

@@ -1,6 +1,8 @@
 // src/app/api/sheets/import-all/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores, items } from '@/lib/db/schema';
+import { eq, asc } from 'drizzle-orm';
 import { getSheetsClient } from '@/lib/googleSheetsClient';
 
 export const maxDuration = 30; // Reduced from 59 to 30 seconds to save costs
@@ -27,53 +29,41 @@ function formatToBuenosAires(datetime: string) {
 
 export async function POST(request: NextRequest) {
   try {
-      
+
     // Obtener datos del cuerpo
         const { store_id } = await request.json();
-    
+
     if (!store_id) {
       return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
     }
 
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Verificar que la tienda existe
-    const { data: storeData, error: storeError } = await supabase
-      .from('stores')
-      .select('id')
-      .eq('store_id', store_id)
-      .single();
-      
-    if (storeError || !storeData) {
+    const [storeData] = await db.select({ id: stores.id })
+      .from(stores)
+      .where(eq(stores.store_id, store_id))
+      .limit(1);
+
+    if (!storeData) {
       return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
     // Obtener todos los productos de la tienda
-    const { data: items, error: itemsError } = await supabase
-      .from('items')
-      .select('*')
-      .eq('seller_id', store_id)
-      .order('last_updated', { ascending: true })
-      
+    const storeItems = await db.select().from(items)
+      .where(eq(items.seller_id, store_id))
+      .orderBy(asc(items.last_updated));
 
-    if (itemsError) {
-      console.error('Error fetching items:', itemsError);
-      return NextResponse.json({ error: 'Error fetching items' }, { status: 500 });
-    }
-
-    if (!items || items.length === 0) {
-      return NextResponse.json({ 
-        success: true, 
-        message: 'No items found to sync', 
-        synced: 0 
+    if (!storeItems || storeItems.length === 0) {
+      return NextResponse.json({
+        success: true,
+        message: 'No items found to sync',
+        synced: 0
       });
     }
 
     // Preparar los datos para la inserción masiva
     const SPREADSHEET_ID = '1uESNvCVtMssb56eop9FhisZPNLMPssUDdhonmXI_2b0';
     const SHEET_NAME = 'Items';
-    
+
     // Primero, añadimos los encabezados
     const headers = [
       'ID',
@@ -104,21 +94,21 @@ export async function POST(request: NextRequest) {
       'URL',
       'SKU',
     ];
-       
+
     try {
         const sheets = getSheetsClient();
-        
+
         // Verificar si la hoja existe, si no existe la creamos
         const existingIdsMap = new Map();
         let lastRow = 1; // Por defecto empezamos después de los encabezados
-        
+
         try {
           // Intentar leer la hoja
           const sheetData = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
             range: `${SHEET_NAME}!A:A`, // Solo leemos la columna de IDs
           });
-          
+
           // Si hay datos, extraer los IDs existentes
           if (sheetData.data.values && sheetData.data.values.length > 0) {
             // La primera fila son los encabezados
@@ -168,28 +158,28 @@ export async function POST(request: NextRequest) {
               }]
             }
           });
-          
-         
+
+
           lastRow = 1;
         }
-        
+
         // Filtrar para obtener solo los items que no están en la hoja
-        const newItems = items.filter(item => !existingIdsMap.has(item.item_id));
-        
+        const newItems = storeItems.filter(item => !existingIdsMap.has(item.item_id));
+
         if (newItems.length === 0) {
           return NextResponse.json({
             success: true,
             message: 'All items are already in the sheet',
-            total: items.length,
+            total: storeItems.length,
             synced: 0,
-            existing: items.length
+            existing: storeItems.length
           });
         }
-        
+
         // Preparar filas para los nuevos items
         const newRows = newItems.map(item => [
           item.item_id || '',
-          formatToBuenosAires(item.last_updated) || '',
+          formatToBuenosAires(item.last_updated?.toISOString() ?? '') || '',
           item.title || '',
           item.seller_id || '',
           item.category_id || '',
@@ -210,13 +200,13 @@ export async function POST(request: NextRequest) {
           item.shipping_discount_rate || '',
           item.shipping_promoted_amount || '',
           item.promotion_id || '',
-          item.campaign_type || '', 
+          item.campaign_type || '',
           item.meli_percentage_cashback || '',
           item.seller_percentage || '',
           item.permalink || '',
           item.sku || '',
         ]);
-        
+
         // Añadir las nuevas filas al final
         await sheets.spreadsheets.values.update({
           spreadsheetId: SPREADSHEET_ID,
@@ -226,26 +216,26 @@ export async function POST(request: NextRequest) {
             values: newRows
           }
         });
-        
+
         return NextResponse.json({
           success: true,
           message: 'New items synced to Google Sheets',
-          total: items.length,
+          total: storeItems.length,
           synced: newItems.length,
-          existing: items.length - newItems.length
+          existing: storeItems.length - newItems.length
         });
-        
+
       } catch (sheetError) {
         console.error('Error syncing to Google Sheets:', sheetError);
-        return NextResponse.json({ 
+        return NextResponse.json({
           error: 'Error syncing to Google Sheets',
-          message: sheetError instanceof Error ? sheetError.message : 'Unknown error' 
+          message: sheetError instanceof Error ? sheetError.message : 'Unknown error'
         }, { status: 500 });
       }
-      
+
     } catch (error) {
       console.error('Error in sheets import-all:', error);
-      return NextResponse.json({ 
+      return NextResponse.json({
         error: 'Internal server error',
         message: error instanceof Error ? error.message : 'Unknown error'
       }, { status: 500 });

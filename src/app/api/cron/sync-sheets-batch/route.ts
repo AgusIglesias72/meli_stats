@@ -1,6 +1,8 @@
 // src/app/api/cron/sync-sheets-batch/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { pendingSheetSyncs } from '@/lib/db/schema';
+import { eq, and, lt, asc } from 'drizzle-orm';
 import { syncItemToSheet } from '@/lib/syncItemToSheet';
 
 export const maxDuration = 300; // 5 minutos máximo para procesar el batch
@@ -20,20 +22,11 @@ export async function GET(request: NextRequest) {
   try {
     console.log('[SHEETS-BATCH] 🚀 Iniciando sincronización batch con Google Sheets...');
 
-    const supabase = createServerSupabaseClient();
-
     // Obtener todos los items pendientes (máximo 500 por ejecución)
-    const { data: pendingItems, error: fetchError } = await supabase
-      .from('pending_sheet_syncs')
-      .select('*')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true })
+    const pendingItems = await db.select().from(pendingSheetSyncs)
+      .where(eq(pendingSheetSyncs.status, 'pending'))
+      .orderBy(asc(pendingSheetSyncs.created_at))
       .limit(500);
-
-    if (fetchError) {
-      console.error('[SHEETS-BATCH] ❌ Error obteniendo items pendientes:', fetchError);
-      return NextResponse.json({ error: fetchError.message }, { status: 500 });
-    }
 
     if (!pendingItems || pendingItems.length === 0) {
       console.log('[SHEETS-BATCH] ⏭️ No hay items pendientes para sincronizar');
@@ -60,7 +53,7 @@ export async function GET(request: NextRequest) {
 
       // Procesar batch en paralelo (limitado)
       const results = await Promise.allSettled(
-        batch.map(item => processSingleItem(item, supabase))
+        batch.map(item => processSingleItem(item))
       );
 
       // Contar resultados
@@ -89,16 +82,12 @@ export async function GET(request: NextRequest) {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const { error: cleanupError } = await supabase
-      .from('pending_sheet_syncs')
-      .delete()
-      .eq('status', 'processed')
-      .lt('processed_at', sevenDaysAgo.toISOString());
-
-    if (cleanupError) {
-      console.error('[SHEETS-BATCH] ⚠️ Error en cleanup:', cleanupError);
-    } else {
+    try {
+      await db.delete(pendingSheetSyncs)
+        .where(and(eq(pendingSheetSyncs.status, 'processed'), lt(pendingSheetSyncs.processed_at, sevenDaysAgo)));
       console.log('[SHEETS-BATCH] 🧹 Cleanup de registros antiguos completado');
+    } catch (cleanupError) {
+      console.error('[SHEETS-BATCH] ⚠️ Error en cleanup:', cleanupError);
     }
 
     return NextResponse.json({
@@ -124,8 +113,7 @@ export async function GET(request: NextRequest) {
  * Procesa un solo item de la cola
  */
 async function processSingleItem(
-  queueItem: any,
-  supabase: any
+  queueItem: any
 ): Promise<'success' | 'failed' | 'skipped'> {
   try {
     const { id, item_id, item_data, attempts } = queueItem;
@@ -134,14 +122,11 @@ async function processSingleItem(
     if (attempts >= 3) {
       console.log(`[SHEETS-BATCH] ⚠️ Item ${item_id} excedió límite de intentos (${attempts})`);
 
-      await supabase
-        .from('pending_sheet_syncs')
-        .update({
-          status: 'failed',
-          last_error: 'Max attempts exceeded',
-          processed_at: new Date().toISOString()
-        })
-        .eq('id', id);
+      await db.update(pendingSheetSyncs).set({
+        status: 'failed',
+        last_error: 'Max attempts exceeded',
+        processed_at: new Date()
+      }).where(eq(pendingSheetSyncs.id, id));
 
       return 'failed';
     }
@@ -151,13 +136,10 @@ async function processSingleItem(
 
     if (result.success) {
       // Marcar como procesado
-      await supabase
-        .from('pending_sheet_syncs')
-        .update({
-          status: 'processed',
-          processed_at: new Date().toISOString()
-        })
-        .eq('id', id);
+      await db.update(pendingSheetSyncs).set({
+        status: 'processed',
+        processed_at: new Date()
+      }).where(eq(pendingSheetSyncs.id, id));
 
       if (result.action === 'skipped') {
         return 'skipped';
@@ -166,13 +148,10 @@ async function processSingleItem(
       return 'success';
     } else {
       // Incrementar intentos y guardar error
-      await supabase
-        .from('pending_sheet_syncs')
-        .update({
-          attempts: attempts + 1,
-          last_error: result.message || 'Unknown error'
-        })
-        .eq('id', id);
+      await db.update(pendingSheetSyncs).set({
+        attempts: attempts + 1,
+        last_error: result.message || 'Unknown error'
+      }).where(eq(pendingSheetSyncs.id, id));
 
       return 'failed';
     }
@@ -182,13 +161,10 @@ async function processSingleItem(
 
     // Incrementar intentos
     try {
-      await supabase
-        .from('pending_sheet_syncs')
-        .update({
-          attempts: queueItem.attempts + 1,
-          last_error: error instanceof Error ? error.message : 'Unknown error'
-        })
-        .eq('id', queueItem.id);
+      await db.update(pendingSheetSyncs).set({
+        attempts: queueItem.attempts + 1,
+        last_error: error instanceof Error ? error.message : 'Unknown error'
+      }).where(eq(pendingSheetSyncs.id, queueItem.id));
     } catch (updateError) {
       console.error('[SHEETS-BATCH] ❌ Error actualizando estado:', updateError);
     }

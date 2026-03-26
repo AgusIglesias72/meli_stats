@@ -1,21 +1,11 @@
 // src/app/api/team/members/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { users, storeUsers } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
 // Interfaces para tipar los datos
-interface UserData {
-  id: string;
-  email: string;
-}
-
-interface StoreUserData {
-  id: string;
-  role: string;
-  created_at: string;
-  user: UserData;
-}
-
 interface FormattedMember {
   id: string;
   user_id: string;
@@ -29,7 +19,7 @@ export async function GET(request: NextRequest) {
   try {
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
+
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -37,52 +27,42 @@ export async function GET(request: NextRequest) {
     // Obtener el ID de la tienda de los parámetros
     const searchParams = request.nextUrl.searchParams;
     const storeId = searchParams.get('store_id');
-    
+
     if (!storeId) {
       return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
     }
 
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Verificar si el usuario tiene acceso a esta tienda
-    const { data: userAccess, error: accessError } = await supabase
-      .from('store_users')
-      .select('role')
-      .eq('user_id', authUserId)
-      .eq('store_id', storeId)
-      .single();
+    const [userAccess] = await db
+      .select({ role: storeUsers.role })
+      .from(storeUsers)
+      .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, storeId)))
+      .limit(1);
 
-    if (accessError || !userAccess) {
+    if (!userAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
     // Obtener todos los miembros de la tienda con sus roles
-    const { data: members, error: membersError } = await supabase
-      .from('store_users')
-      .select(`
-        id,
-        role,
-        created_at,
-        user:user_id (
-          id,
-          email
-        )
-      `)
-      .eq('store_id', storeId);
-
-    if (membersError) {
-      console.error('Error fetching team members:', membersError);
-      return NextResponse.json({ error: 'Error fetching team members' }, { status: 500 });
-    }
+    const members = await db
+      .select({
+        id: storeUsers.id,
+        role: storeUsers.role,
+        created_at: storeUsers.created_at,
+        user_id: users.id,
+        email: users.email,
+      })
+      .from(storeUsers)
+      .leftJoin(users, eq(storeUsers.user_id, users.id))
+      .where(eq(storeUsers.store_id, storeId));
 
     // Formatear los datos para la respuesta
-    const formattedMembers: FormattedMember[] = (members as unknown as StoreUserData[]).map(member => ({
+    const formattedMembers: FormattedMember[] = members.map(member => ({
       id: member.id,
-      user_id: member.user?.id || '',
-      email: member.user?.email || '',
-      role: member.role,
-      created_at: member.created_at
+      user_id: member.user_id || '',
+      email: member.email || '',
+      role: member.role || '',
+      created_at: member.created_at?.toISOString() || ''
     }));
 
     return NextResponse.json({

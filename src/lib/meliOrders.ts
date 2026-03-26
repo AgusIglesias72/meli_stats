@@ -1,5 +1,7 @@
 // src/lib/meliOrders.ts
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores, orders } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 
 interface OrderNotification {
   topic: string;
@@ -20,8 +22,8 @@ function convertToBuenosAiresLocal(dateString: string): string {
       console.warn('Fecha inválida:', dateString);
       return dateString;
     }
-  
-    // “en-CA” da formato YYYY-MM-DD HH:mm:ss.sss
+
+    // "en-CA" da formato YYYY-MM-DD HH:mm:ss.sss
     const formatted = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Argentina/Buenos_Aires',
       year:   'numeric',
@@ -34,9 +36,9 @@ function convertToBuenosAiresLocal(dateString: string): string {
       fractionalSecondDigits: 3,
       hour12: false
     }).format(date);
-  
+
     // -> "2025-05-11 23:07:27.000"
-    // simplemente sustituimos el espacio por “T”
+    // simplemente sustituimos el espacio por "T"
     return formatted.replace(' ', 'T');
   }
 /**
@@ -46,7 +48,7 @@ export async function processOrderNotification(notification: OrderNotification):
   try {
     // Extraer el ID de la orden del resource (formato: '/orders/123456789')
     const orderIdMatch = notification.resource.match(/\/orders\/(\d+)/);
-    
+
     if (!orderIdMatch) {
       console.error(`Formato de resource inválido para orders: ${notification.resource}`);
       return false;
@@ -56,27 +58,26 @@ export async function processOrderNotification(notification: OrderNotification):
     const userId = notification.user_id.toString();
 
     // Obtener token de acceso para el usuario
-    const supabase = createServerSupabaseClient();
-    const { data: store, error: storeError } = await supabase
-      .from('stores')
-      .select('id, access_token, token_expiry')
-      .eq('ml_user_id', userId)
-      .single();
+    const [store] = await db.select({
+      id: stores.id,
+      access_token: stores.access_token,
+      token_expiry: stores.token_expiry,
+    }).from(stores).where(eq(stores.ml_user_id, parseInt(userId))).limit(1);
 
-    if (storeError || !store) {
-      console.error(`No se encontró la tienda para el usuario ${userId}:`, storeError);
+    if (!store) {
+      console.error(`No se encontró la tienda para el usuario ${userId}`);
       return false;
     }
 
     // Verificar si el token ha expirado
-    if (new Date(store.token_expiry) < new Date()) {
+    if (new Date(store.token_expiry!) < new Date()) {
       console.error(`Token expirado para la tienda ${store.id}`);
       return false;
     }
 
     // Obtener los detalles completos de la orden
-    const orderDetails = await fetchOrderDetails(orderId, userId, store.access_token);
-    
+    const orderDetails = await fetchOrderDetails(orderId, userId, store.access_token!);
+
     if (!orderDetails) {
       console.error(`No se pudo obtener información de la orden ${orderId}`);
       return false;
@@ -84,7 +85,7 @@ export async function processOrderNotification(notification: OrderNotification):
 
     // Guardar o actualizar la orden en la base de datos
     await saveOrderToDatabase(orderDetails, userId, store.id);
-    
+
     return true;
   } catch (error) {
     console.error('Error procesando notificación de orden:', error);
@@ -99,7 +100,7 @@ export async function processShipmentNotification(notification: OrderNotificatio
   try {
     // Extraer el ID del envío del resource (formato: '/shipments/123456789')
     const shipmentIdMatch = notification.resource.match(/\/shipments\/(\d+)/);
-    
+
     if (!shipmentIdMatch) {
       console.error(`Formato de resource inválido para shipments: ${notification.resource}`);
       return false;
@@ -109,27 +110,26 @@ export async function processShipmentNotification(notification: OrderNotificatio
     const userId = notification.user_id.toString();
 
     // Obtener token de acceso para el usuario
-    const supabase = createServerSupabaseClient();
-    const { data: store, error: storeError } = await supabase
-      .from('stores')
-      .select('id, access_token, token_expiry')
-      .eq('ml_user_id', userId)
-      .single();
+    const [store] = await db.select({
+      id: stores.id,
+      access_token: stores.access_token,
+      token_expiry: stores.token_expiry,
+    }).from(stores).where(eq(stores.ml_user_id, parseInt(userId))).limit(1);
 
-    if (storeError || !store) {
-      console.error(`No se encontró la tienda para el usuario ${userId}:`, storeError);
+    if (!store) {
+      console.error(`No se encontró la tienda para el usuario ${userId}`);
       return false;
     }
 
     // Verificar si el token ha expirado
-    if (new Date(store.token_expiry) < new Date()) {
+    if (new Date(store.token_expiry!) < new Date()) {
       console.error(`Token expirado para la tienda ${store.id}`);
       return false;
     }
 
     // Obtener los detalles del envío
-    const shipmentDetails = await fetchShipmentDetails(shipmentId, store.access_token);
-    
+    const shipmentDetails = await fetchShipmentDetails(shipmentId, store.access_token!);
+
     if (!shipmentDetails || !shipmentDetails.order_id) {
       console.error(`No se pudo obtener información del envío ${shipmentId} o no tiene order_id`);
       return false;
@@ -137,7 +137,7 @@ export async function processShipmentNotification(notification: OrderNotificatio
 
     // Actualizar la información de envío para la orden correspondiente
     await updateOrderShippingInfo(shipmentDetails.order_id, shipmentDetails, store.id);
-    
+
     return true;
   } catch (error) {
     console.error('Error procesando notificación de envío:', error);
@@ -152,7 +152,6 @@ export async function processPaymentNotification(notification: OrderNotification
   try {
     // Extraer el ID del pago del resource (formato: '/payments/123456789' o collection/123456789)
     const paymentIdMatch = notification.resource.match(/\/collections\/(\d+)/);
-    
 
 
     if (!paymentIdMatch) {
@@ -164,21 +163,19 @@ export async function processPaymentNotification(notification: OrderNotification
     const userId = notification.user_id.toString();
 
     // Obtener token de acceso para el usuario
-    const supabase = createServerSupabaseClient();
+    const [store] = await db.select({
+      id: stores.id,
+      access_token: stores.access_token,
+      token_expiry: stores.token_expiry,
+    }).from(stores).where(eq(stores.ml_user_id, parseInt(userId))).limit(1);
 
-    const { data: store, error: storeError } = await supabase
-      .from('stores')
-      .select('id, access_token, token_expiry')
-      .eq('ml_user_id', userId)
-      .single();
-
-    if (storeError || !store) {
-      console.error(`No se encontró la tienda para el usuario ${userId}:`, storeError);
+    if (!store) {
+      console.error(`No se encontró la tienda para el usuario ${userId}`);
       return false;
     }
 
     // Verificar si el token ha expirado
-    if (new Date(store.token_expiry) < new Date()) {
+    if (new Date(store.token_expiry!) < new Date()) {
       console.error(`Token expirado para la tienda ${store.id}`);
       return false;
     }
@@ -214,7 +211,7 @@ export async function processPaymentNotification(notification: OrderNotification
     console.error('Error procesando notificación de pago:', error);
     return false;
   }
-} 
+}
 
 /**
  * Obtiene los detalles completos de una orden
@@ -249,22 +246,22 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
     // Procesar el primer item si existe
     if (orderData.order_items && orderData.order_items.length > 0) {
       const firstItem = orderData.order_items[0];
-      
+
       orderDetails.quantity = firstItem.quantity || 0;
       orderDetails.item_id = firstItem.item ? firstItem.item.id : null;
       orderDetails.seller_sku = firstItem.item ? firstItem.item.seller_sku : null;
       orderDetails.variation_id = firstItem.item ? firstItem.item.variation_id : null;
       orderDetails.item_title = firstItem.item ? firstItem.item.title : null;
       orderDetails.unit_price = firstItem.unit_price || 0;
-      
+
       // Procesar variation_attributes
-      if (firstItem.item && firstItem.item.variation_attributes && 
+      if (firstItem.item && firstItem.item.variation_attributes &&
           Array.isArray(firstItem.item.variation_attributes)) {
-        
+
         const attributesText = firstItem.item.variation_attributes
           .map((attr: any) => `${attr.name}: ${attr.value_name}`)
           .join(', ');
-        
+
         orderDetails.variation_attributes = attributesText;
       } else {
         orderDetails.variation_attributes = '';
@@ -287,10 +284,10 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
           'Authorization': `Bearer ${accessToken}`
         }
       });
-      
+
       if (billingResponse.ok) {
         const billingData = await billingResponse.json();
-        orderDetails.doc_number = billingData.billing_info && billingData.billing_info.doc_number ? 
+        orderDetails.doc_number = billingData.billing_info && billingData.billing_info.doc_number ?
                                 billingData.billing_info.doc_number : '';
       } else {
         console.error(`Error al obtener información de facturación para orden ${orderId}: ${billingResponse.status}`);
@@ -310,7 +307,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
             'Authorization': `Bearer ${accessToken}`
           }
         });
-        
+
         if (shippingResponse.ok) {
           const shippingData = await shippingResponse.json();
           orderDetails.shipping_id = shippingData.id;
@@ -326,13 +323,13 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
                 'Authorization': `Bearer ${accessToken}`
               }
             });
-            
+
             if (costsResponse.ok) {
               const costsData = await costsResponse.json();
-              
+
               if (costsData.senders && costsData.senders[0]) {
                 const senderData = costsData.senders[0];
-                
+
                 // shipping_amount = SOLO las bonificaciones que RECIBE el vendedor
                 let shippingAmount = 0;
 
@@ -353,7 +350,7 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
                 }
 
                 orderDetails.shipping_amount = shippingAmount;
-                
+
                 // Calcular comisiones de envío si existen
                 if (senderData.charges) {
                   const shippingCharges = Object.values(senderData.charges)
@@ -416,10 +413,10 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
       orderDetails.charge_other_taxes = 0;
       orderDetails.charge_coupon = 0;
       orderDetails.charge_uncategorized = 0;
-      
+
       // Array para almacenar todos los tipos de cargos
       const chargeTypes: string[] = [];
-      
+
       // Procesar cada pago aprobado o autorizado
       for (const payment of orderData.payments) {
         if (payment.status === 'approved' || payment.status === 'authorized') {
@@ -430,39 +427,39 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
                 'Authorization': `Bearer ${accessToken}`
               }
             });
-            
+
             if (paymentResponse.ok) {
               const paymentData = await paymentResponse.json();
-              
+
               // Sumar montos relevantes
               if (paymentData.transaction_details && paymentData.transaction_details.total_paid_amount) {
                 orderDetails.total_paid_amount += paymentData.transaction_details.total_paid_amount;
               }
-              
+
               if (paymentData.transaction_amount) {
                 orderDetails.transaction_amount += paymentData.transaction_amount;
               }
-              
+
               if (paymentData.transaction_details && paymentData.transaction_details.net_received_amount) {
                 orderDetails.net_received_amount += paymentData.transaction_details.net_received_amount;
               }
-              
-              // CORREGIDO: NO sumar paymentData.shipping_amount 
-              // (eso es lo que pag\u00f3 el comprador, no lo que recibe el vendedor)
+
+              // CORREGIDO: NO sumar paymentData.shipping_amount
+              // (eso es lo que pagó el comprador, no lo que recibe el vendedor)
               // El shipping_amount correcto se obtiene del endpoint /shipments/{id}/costs
-              
+
               if (paymentData.coupon_amount) {
                 orderDetails.coupon_amount += paymentData.coupon_amount;
               }
-              
+
               if (paymentData.installments) {
                 orderDetails.installments = paymentData.installments;
               }
-              
+
               if (paymentData.money_release_date) {
                 orderDetails.money_release_date = convertToBuenosAiresLocal(paymentData.money_release_date);
               }
-              
+
               // Procesar los detalles de cargos
               if (paymentData.charges_details && Array.isArray(paymentData.charges_details)) {
                 paymentData.charges_details.forEach((charge: any) => {
@@ -470,10 +467,10 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
                   if (charge.type && !chargeTypes.includes(charge.type)) {
                     chargeTypes.push(charge.type);
                   }
-                  
+
                   // Obtener el monto del cargo
                   const amount = charge.amounts && charge.amounts.original ? charge.amounts.original : 0;
-                  
+
                   // Clasificar y sumar según el tipo y nombre del cargo
                   if (charge.name === 'flat_fee') {
                     orderDetails.charge_flat_fee += amount;
@@ -505,8 +502,8 @@ async function fetchOrderDetails(orderId: string, userId: string, accessToken: s
         }
       }
 
-      
-      
+
+
       // Guardar string con los tipos de todos los cargos
       orderDetails.charge_types = chargeTypes.join(', ');
     } else {
@@ -574,48 +571,32 @@ async function fetchShipmentDetails(shipmentId: string, accessToken: string): Pr
  */
 async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: string): Promise<boolean> {
   try {
-    const supabase = createServerSupabaseClient();
-    
     // Verificar si la orden ya existe
-    const { data: existingOrder } = await supabase
-      .from('orders')
-      .select('id')
-      .eq('id', orderDetails.id)
-      .single();
-
+    const [existingOrder] = await db.select({ id: orders.id })
+      .from(orders)
+      .where(eq(orders.id, orderDetails.id.toString()))
+      .limit(1);
 
     const now = new Date().toISOString();
-    
+
     // Preparar el objeto completo para inserción/actualización
     const orderData = {
       ...orderDetails,
+      id: orderDetails.id.toString(),
       store_id: userId,
       updated_at: convertToBuenosAiresLocal(now)
     };
 
     if (existingOrder) {
       // Actualizar orden existente
-      const { error: updateError } = await supabase
-        .from('orders')
-        .update(orderData)
-        .eq('id', orderDetails.id);
-
-      if (updateError) {
-        console.error(`Error actualizando orden ${orderDetails.id}:`, updateError);
-        return false;
-      }
+      await db.update(orders)
+        .set(orderData)
+        .where(eq(orders.id, orderDetails.id.toString()));
     } else {
       // Insertar nueva orden
       orderData.created_at = convertToBuenosAiresLocal(now); // Solo para nuevas órdenes
-      
-      const { error: insertError } = await supabase
-        .from('orders')
-        .insert(orderData);
 
-      if (insertError) {
-        console.error(`Error insertando orden ${orderDetails.id}:`, insertError);
-        return false;
-      }
+      await db.insert(orders).values(orderData);
     }
 
     return true;
@@ -630,25 +611,17 @@ async function saveOrderToDatabase(orderDetails: any, userId: string, storeId: s
  */
 async function updateOrderShippingInfo(orderId: string | number, shipmentDetails: any, storeId: string): Promise<boolean> {
   try {
-    const supabase = createServerSupabaseClient();
-    
     // Actualizar solo los campos relacionados con el envío
-    const { error: updateError } = await supabase
-      .from('orders')
-      .update({
-        shipping_id: shipmentDetails.id,
+    await db.update(orders)
+      .set({
+        shipping_id: shipmentDetails.id?.toString(),
         shipping_mode: shipmentDetails.mode || '',
         shipping_logistic_type: shipmentDetails.logistic_type || '',
         shipping_status: shipmentDetails.status || '',
         buffer_date: shipmentDetails.shipping_option.buffering.date || null,
         updated_at: new Date().toISOString()
       })
-      .eq('id', orderId);
-
-    if (updateError) {
-      console.error(`Error actualizando información de envío para orden ${orderId}:`, updateError);
-      return false;
-    }
+      .where(eq(orders.id, orderId.toString()));
 
     return true;
   } catch (error) {

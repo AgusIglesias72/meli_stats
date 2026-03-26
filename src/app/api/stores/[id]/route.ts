@@ -1,6 +1,8 @@
 // src/app/api/stores/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores, storeUsers } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
 export async function GET(
@@ -10,48 +12,44 @@ export async function GET(
   try {
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
+
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const storeId = (await params).id;
-    
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
-    // Verificar si el usuario tiene acceso a esta tienda
-    const { data: userAccess, error: accessError } = await supabase
-      .from('store_users')
-      .select('role')
-      .eq('user_id', authUserId)
-      .eq('store_id', storeId)
-      .single();
 
-    if (accessError || !userAccess) {
+    // Verificar si el usuario tiene acceso a esta tienda
+    const [userAccess] = await db
+      .select({ role: storeUsers.role })
+      .from(storeUsers)
+      .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, storeId)))
+      .limit(1);
+
+    if (!userAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
     // Obtener la información de la tienda
-    const { data: storeInfo, error: storeError } = await supabase
-      .from('stores')
-      .select(`
-        id,
-        store_id,
-        name,
-        ml_user_id,
-        token_expiry,
-        created_at,
-        updated_at,
-        seller_first_name,
-        seller_last_name,
-        seller_email,
-        seller_identification_number
-      `)
-      .eq('id', storeId)
-      .single();
+    const [storeInfo] = await db
+      .select({
+        id: stores.id,
+        store_id: stores.store_id,
+        name: stores.name,
+        ml_user_id: stores.ml_user_id,
+        token_expiry: stores.token_expiry,
+        created_at: stores.created_at,
+        updated_at: stores.updated_at,
+        seller_first_name: stores.seller_first_name,
+        seller_last_name: stores.seller_last_name,
+        seller_email: stores.seller_email,
+        seller_identification_number: stores.seller_identification_number,
+      })
+      .from(stores)
+      .where(eq(stores.id, storeId))
+      .limit(1);
 
-    if (storeError || !storeInfo) {
+    if (!storeInfo) {
       return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
@@ -73,13 +71,13 @@ export async function PATCH(
     try {
       // Verificar autenticación
       const authUserId = (await cookies()).get('auth_user_id')?.value;
-      
+
       if (!authUserId) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
-  
+
       const storeId = (await params).id;
-      
+
       // Obtener datos a actualizar
       const {
         name,
@@ -88,47 +86,42 @@ export async function PATCH(
         seller_email,
         seller_identification_number
       } = await request.json();
-      
-      // Crear conexión a Supabase
-      const supabase = createServerSupabaseClient();
-      
+
       // Verificar si el usuario tiene acceso a esta tienda
-      const { data: userAccess, error: accessError } = await supabase
-        .from('store_users')
-        .select('role')
-        .eq('user_id', authUserId)
-        .eq('store_id', storeId)
-        .single();
-  
-      if (accessError || !userAccess) {
+      const [userAccess] = await db
+        .select({ role: storeUsers.role })
+        .from(storeUsers)
+        .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, storeId)))
+        .limit(1);
+
+      if (!userAccess) {
         return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
       }
-  
+
       // Verificar si el usuario tiene permisos para actualizar (owner o admin)
-      if (!['owner', 'admin'].includes(userAccess.role)) {
+      if (!['owner', 'admin'].includes(userAccess.role!)) {
         return NextResponse.json({ error: 'You do not have permission to update store information' }, { status: 403 });
       }
-  
+
       // Actualizar la información de la tienda
-      const { data: updatedStore, error: updateError } = await supabase
-        .from('stores')
-        .update({
+      const [updatedStore] = await db
+        .update(stores)
+        .set({
           name: name,
           seller_first_name: seller_first_name,
           seller_last_name: seller_last_name,
           seller_email: seller_email,
           seller_identification_number: seller_identification_number,
-          updated_at: new Date().toISOString()
+          updated_at: new Date()
         })
-        .eq('id', storeId)
-        .select()
-        .single();
-  
-      if (updateError) {
-        console.error('Error updating store:', updateError);
+        .where(eq(stores.id, storeId))
+        .returning();
+
+      if (!updatedStore) {
+        console.error('Error updating store');
         return NextResponse.json({ error: 'Error updating store' }, { status: 500 });
       }
-  
+
       return NextResponse.json({
         success: true,
         store: updatedStore

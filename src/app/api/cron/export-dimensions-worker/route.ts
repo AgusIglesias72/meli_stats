@@ -1,6 +1,8 @@
 // src/app/api/cron/export-dimensions-worker/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 
 export const maxDuration = 30; // Función ligera de 30 segundos
 export const runtime = 'nodejs';
@@ -33,21 +35,22 @@ export async function GET(request: NextRequest) {
 
     console.log(`[WORKER] Processing store: ${storeId}`);
 
-    const supabase = createServerSupabaseClient();
-
     // Obtener información de la tienda
-    const { data: store, error: storeError } = await supabase
-      .from('stores')
-      .select('id, store_id, ml_user_id, access_token, token_expiry, name')
-      .eq('id', storeId)
-      .single();
+    const [store] = await db.select({
+      id: stores.id,
+      store_id: stores.store_id,
+      ml_user_id: stores.ml_user_id,
+      access_token: stores.access_token,
+      token_expiry: stores.token_expiry,
+      name: stores.name,
+    }).from(stores).where(eq(stores.id, storeId)).limit(1);
 
-    if (storeError || !store) {
+    if (!store) {
       return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
     // Verificar token
-    if (new Date(store.token_expiry) < new Date()) {
+    if (new Date(store.token_expiry!) < new Date()) {
       return NextResponse.json({ error: 'Token expired' }, { status: 401 });
     }
 

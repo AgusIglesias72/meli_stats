@@ -1,9 +1,10 @@
 // src/app/api/orders/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { orders } from '@/lib/db/schema';
+import { eq, and, inArray, gte, lte, desc, count as drizzleCount } from 'drizzle-orm';
 
 export const maxDuration = 10; // Máximo 59 segundos para procesar grandes cantidades de datos
-export const runtime = 'edge';
 
 /**
  * Función auxiliar para crear objetos de fecha según el parámetro de consulta
@@ -12,82 +13,82 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
   const now = new Date();
   let startDate: Date;
   let endDate: Date;
-  
+
   switch (dateParam) {
     case 'last_date':
       // Último día (ayer)
       startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 1);
       startDate.setHours(0, 0, 0, 0);
-      
+
       endDate = new Date(now);
       endDate.setDate(endDate.getDate() - 1);
       endDate.setHours(23, 59, 59, 999);
       break;
-      
+
     case 'last_week':
       // Encontrar el lunes de esta semana
       const today = now.getDay(); // 0 = domingo, 1 = lunes, etc.
       const daysFromMonday = today === 0 ? 6 : today - 1; // Si es domingo (0), retroceder 6 días
-      
+
       // Ir al lunes de esta semana
       const thisMonday = new Date(now);
       thisMonday.setDate(now.getDate() - daysFromMonday);
       thisMonday.setHours(0, 0, 0, 0);
-      
+
       // El lunes de la semana pasada es 7 días antes del lunes de esta semana
       startDate = new Date(thisMonday);
       startDate.setDate(thisMonday.getDate() - 7);
       startDate.setHours(0, 0, 0, 0);
-      
+
       // El domingo de la semana pasada es 6 días después del lunes de la semana pasada
       endDate = new Date(startDate);
       endDate.setDate(startDate.getDate() + 6);
       endDate.setHours(23, 59, 59, 999);
       break;
-      
+
     case 'last_month':
       // Mes pasado completo
       startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       startDate.setHours(0, 0, 0, 0);
-      
+
       // Último día del mes pasado
       endDate = new Date(now.getFullYear(), now.getMonth(), 0);
       endDate.setHours(23, 59, 59, 999);
       break;
-      
+
     case 'month_to_date':
       // Desde el inicio del mes hasta hoy
       startDate = new Date(now.getFullYear(), now.getMonth(), 1);
       startDate.setHours(0, 0, 0, 0);
-      
+
       endDate = new Date(now);
       endDate.setHours(23, 59, 59, 999);
       break;
-    
+
     case 'today':
       startDate = new Date(now);
       startDate.setHours(0, 0, 0, 0);
-      
+
       endDate = new Date(now);
       endDate.setHours(23, 59, 59, 999);
       break;
-    
+
     case 'last_30_days':
       startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 30);
       startDate.setHours(0, 0, 0, 0);
-      
+
       endDate = new Date(now);
       endDate.setHours(23, 59, 59, 999);
       break;
-      
+
     default:
       // Por defecto, últimos 30 días
       startDate = new Date(now);
       startDate.setDate(startDate.getDate() - 30);
       startDate.setHours(0, 0, 0, 0);
-      
+
       endDate = new Date(now);
       endDate.setHours(23, 59, 59, 999);
   }
@@ -95,6 +96,23 @@ function getDateRange(dateParam: string | null): { startDate: Date, endDate: Dat
   console.log('startDate', startDate);
   console.log('endDate', endDate);
   return { startDate, endDate };
+}
+
+/**
+ * Construye las condiciones WHERE para la consulta de órdenes
+ */
+function buildWhereConditions(storeIds: string[], startDate: Date, endDate: Date, status: string | null) {
+  const conditions = [
+    inArray(orders.store_id, storeIds),
+    gte(orders.date_created, startDate.toISOString()),
+    lte(orders.date_created, endDate.toISOString()),
+  ];
+
+  if (status) {
+    conditions.push(eq(orders.status, status));
+  }
+
+  return and(...conditions);
 }
 
 /**
@@ -108,7 +126,7 @@ export async function GET(request: NextRequest) {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-     
+
     const apiKey = authHeader.split(' ')[1];
     if (apiKey !== process.env.NEXT_PUBLIC_API_SECRET_KEY) {
       return NextResponse.json({ error: 'Invalid API key' }, { status: 401 });
@@ -118,72 +136,50 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const dateParam = searchParams.get('date_range'); // 'last_date', 'last_week', 'month_to_date'
     const status = searchParams.get('status'); // opcional: filtrar por estado
-    
+
     // Parámetros de paginación
     const page = parseInt(searchParams.get('page') || '1');
     const pageSize = parseInt(searchParams.get('pageSize') || '1000');
     const getAllPages = searchParams.get('getAllPages') === 'true';
 
-    // Crear cliente de Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Obtener el rango de fechas según el parámetro
     const { startDate, endDate } = getDateRange(dateParam);
-    
-    // IDs de tiendas a consultar 
+
+    // IDs de tiendas a consultar
     const storeIds = ['1027217359', '205076801'];
 
-    // Construir la consulta base para el conteo y para los datos
-    let baseQuery = supabase
-      .from('orders')
-      .select('*', { count: 'exact' })
-      .in('store_id', storeIds)
-      .gte('date_created', startDate.toISOString())
-      .lte('date_created', endDate.toISOString());
+    // Construir condiciones WHERE
+    const whereConditions = buildWhereConditions(storeIds, startDate, endDate, status);
 
-    // Filtrar por estado si se proporciona
-    if (status) {
-      baseQuery = baseQuery.eq('status', status);
-    }
-
-    // Primero, obtenemos el conteo total para saber cuántas páginas hay
-    const { count, error: countError } = await baseQuery;
-
-    if (countError) {
-      console.error('Error counting orders:', countError);
-      return NextResponse.json({ error: 'Error counting orders' }, { status: 500 });
-    }
+    // Obtener el conteo total
+    const [countResult] = await db.select({ value: drizzleCount() }).from(orders).where(whereConditions);
+    const totalCount = countResult?.value || 0;
 
     // Calcular total de páginas
-    const totalCount = count || 0;
     const totalPages = Math.ceil(totalCount / pageSize);
 
     // Si se solicitan todas las páginas y hay más de una
     if (getAllPages && totalPages > 1) {
       return await getAllPaginatedOrders(
-        supabase, 
-        baseQuery, 
-        totalCount, 
-        pageSize, 
-        startDate, 
-        endDate, 
+        whereConditions,
+        totalCount,
+        pageSize,
+        startDate,
+        endDate,
         dateParam
       );
     }
 
     // Si solo se solicita una página específica, aplicamos limit y offset
     const offset = (page - 1) * pageSize;
-    const { data: orders, error: ordersError } = await baseQuery
-      .order('date_created', { ascending: false })
-      .range(offset, offset + pageSize - 1);
-
-    if (ordersError) {
-      console.error('Error fetching orders:', ordersError);
-      return NextResponse.json({ error: 'Error fetching orders from database' }, { status: 500 });
-    }
+    const ordersData = await db.select().from(orders)
+      .where(whereConditions)
+      .orderBy(desc(orders.date_created))
+      .limit(pageSize)
+      .offset(offset);
 
     // Formatear órdenes
-    const formattedOrders = formatOrders(orders || []);
+    const formattedOrders = formatOrders(ordersData || []);
 
     // Devolver las órdenes formateadas con información de paginación
     return NextResponse.json({
@@ -203,10 +199,10 @@ export async function GET(request: NextRequest) {
       orders: formattedOrders,
       count: formattedOrders.length
     });
-    
+
   } catch (error: any) {
     console.error('Error processing orders request:', error);
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: 'Internal server error',
       message: error.message || 'Unknown error'
     }, { status: 500 });
@@ -217,9 +213,8 @@ export async function GET(request: NextRequest) {
  * Función auxiliar para obtener todas las páginas de órdenes en una sola respuesta
  */
 async function getAllPaginatedOrders(
-  supabase: any, 
-  baseQuery: any, 
-  totalCount: number, 
+  whereConditions: any,
+  totalCount: number,
   pageSize: number,
   startDate: Date,
   endDate: Date,
@@ -231,17 +226,19 @@ async function getAllPaginatedOrders(
   // Obtener todas las páginas en secuencia
   for (let page = 1; page <= totalPages; page++) {
     const offset = (page - 1) * pageSize;
-    const { data: pageOrders, error: ordersError } = await baseQuery
-      .order('date_created', { ascending: false })
-      .range(offset, offset + pageSize - 1);
+    try {
+      const pageOrders = await db.select().from(orders)
+        .where(whereConditions)
+        .orderBy(desc(orders.date_created))
+        .limit(pageSize)
+        .offset(offset);
 
-    if (ordersError) {
-      console.error(`Error fetching orders page ${page}:`, ordersError);
+      if (pageOrders && pageOrders.length > 0) {
+        allOrders = [...allOrders, ...pageOrders];
+      }
+    } catch (error) {
+      console.error(`Error fetching orders page ${page}:`, error);
       continue; // Continuar con la siguiente página incluso si hay error
-    }
-
-    if (pageOrders && pageOrders.length > 0) {
-      allOrders = [...allOrders, ...pageOrders];
     }
 
   }
@@ -275,7 +272,7 @@ function formatOrders(orders: any[]) {
   // Formatear fechas para Argentina (GMT-3)
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return null;
-    
+
     const date = new Date(dateStr);
     return date.toLocaleDateString('es-AR', {
       timeZone: 'America/Argentina/Buenos_Aires',

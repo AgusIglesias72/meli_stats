@@ -1,6 +1,8 @@
 // src/app/api/cron/export-dimensions-optimized/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores, dimensionsExportCache } from '@/lib/db/schema';
+import { and, gt, ne, eq, asc } from 'drizzle-orm';
 import crypto from 'crypto';
 
 export const maxDuration = 60; // Reducido de 300 a 60 segundos
@@ -27,51 +29,55 @@ function generateChecksum(data: any): string {
 
 // Verificar si un item necesita actualización
 async function needsUpdate(
-  supabase: any,
   storeId: string,
   itemId: string,
   variationId: string,
   checksum: string,
   lastUpdated: string
 ): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('dimensions_export_cache')
-    .select('checksum, last_updated_at')
-    .eq('store_id', storeId)
-    .eq('item_id', itemId)
-    .eq('variation_id', variationId)
-    .single();
+  const [data] = await db.select({
+    checksum: dimensionsExportCache.checksum,
+    last_updated_at: dimensionsExportCache.last_updated_at,
+  }).from(dimensionsExportCache)
+    .where(and(
+      eq(dimensionsExportCache.store_id, storeId),
+      eq(dimensionsExportCache.item_id, itemId),
+      eq(dimensionsExportCache.variation_id, variationId)
+    ))
+    .limit(1);
 
-  if (error || !data) {
+  if (!data) {
     // Item no existe en caché, necesita procesarse
     return true;
   }
 
   // Verificar si cambió el checksum o la fecha de actualización
-  return data.checksum !== checksum || new Date(data.last_updated_at) < new Date(lastUpdated);
+  return data.checksum !== checksum || new Date(data.last_updated_at!) < new Date(lastUpdated);
 }
 
 // Actualizar caché después de exportar
 async function updateCache(
-  supabase: any,
   storeId: string,
   itemId: string,
   variationId: string,
   checksum: string,
   lastUpdated: string
 ) {
-  await supabase
-    .from('dimensions_export_cache')
-    .upsert({
-      store_id: storeId,
-      item_id: itemId,
-      variation_id: variationId,
+  await db.insert(dimensionsExportCache).values({
+    store_id: storeId,
+    item_id: itemId,
+    variation_id: variationId,
+    checksum: checksum,
+    last_updated_at: new Date(lastUpdated),
+    last_exported_at: new Date()
+  }).onConflictDoUpdate({
+    target: [dimensionsExportCache.store_id, dimensionsExportCache.item_id, dimensionsExportCache.variation_id],
+    set: {
       checksum: checksum,
-      last_updated_at: lastUpdated,
-      last_exported_at: new Date().toISOString()
-    }, {
-      onConflict: 'store_id,item_id,variation_id'
-    });
+      last_updated_at: new Date(lastUpdated),
+      last_exported_at: new Date()
+    }
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -94,38 +100,35 @@ export async function GET(request: NextRequest) {
       console.log('Vercel Cron call');
     }
 
-    const supabase = createServerSupabaseClient();
-
     // En lugar de procesar TODAS las tiendas en una ejecución,
     // dividir el trabajo en múltiples ejecuciones
-    const { data: stores, error: storesError } = await supabase
-      .from('stores')
-      .select('id, store_id, ml_user_id, access_token, token_expiry, name')
-      .gt('token_expiry', new Date().toISOString())
-      .neq('store_id', '405011859')
-      .order('store_id')
+    const activeStores = await db.select({
+      id: stores.id,
+      store_id: stores.store_id,
+      ml_user_id: stores.ml_user_id,
+      access_token: stores.access_token,
+      token_expiry: stores.token_expiry,
+      name: stores.name,
+    }).from(stores)
+      .where(and(gt(stores.token_expiry, new Date()), ne(stores.store_id, '405011859')))
+      .orderBy(asc(stores.store_id))
       .limit(2); // Procesar solo 2 tiendas por ejecución
 
-    if (storesError) {
-      console.error('Error fetching stores:', storesError);
-      return NextResponse.json({ error: 'Error fetching stores' }, { status: 500 });
-    }
-
-    if (!stores || stores.length === 0) {
+    if (!activeStores || activeStores.length === 0) {
       return NextResponse.json({
         success: true,
         message: 'No active stores found'
       });
     }
 
-    console.log(`Processing ${stores.length} stores (OPTIMIZED MODE)`);
+    console.log(`Processing ${activeStores.length} stores (OPTIMIZED MODE)`);
 
     let totalItemsProcessed = 0;
     let totalItemsSkipped = 0;
     let totalApiCallsSaved = 0;
 
     // Procesar cada tienda
-    for (const store of stores) {
+    for (const store of activeStores) {
       try {
         console.log(`\n📦 Processing store: ${store.store_id} - ${store.name}`);
 
@@ -174,8 +177,7 @@ export async function GET(request: NextRequest) {
 
             // Verificar si necesita actualización
             const shouldUpdate = await needsUpdate(
-              supabase,
-              store.ml_user_id,
+              String(store.ml_user_id),
               item.id,
               '',
               checksum,
@@ -193,8 +195,7 @@ export async function GET(request: NextRequest) {
             // Por ahora solo actualizamos el caché
 
             await updateCache(
-              supabase,
-              store.ml_user_id,
+              String(store.ml_user_id),
               item.id,
               '',
               checksum,
@@ -235,7 +236,7 @@ export async function GET(request: NextRequest) {
         itemsProcessed: totalItemsProcessed,
         itemsSkipped: totalItemsSkipped,
         apiCallsSaved: totalApiCallsSaved,
-        storesProcessed: stores.length
+        storesProcessed: activeStores.length
       }
     });
 

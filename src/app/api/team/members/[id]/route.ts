@@ -1,6 +1,8 @@
 // src/app/api/team/members/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { storeUsers } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
 // PATCH: Actualiza el rol de un miembro del equipo
@@ -10,49 +12,45 @@ export async function PATCH(
 ) {
   try {
     const memberId = (await params).id;
-    
+
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
+
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // Obtener los datos del cuerpo
     const { role } = await request.json();
-    
+
     if (!role || !['admin', 'editor', 'viewer'].includes(role)) {
       return NextResponse.json({ error: 'Invalid role specified' }, { status: 400 });
     }
 
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Obtener información del miembro a actualizar
-    const { data: memberInfo, error: memberError } = await supabase
-      .from('store_users')
-      .select('id, user_id, store_id, role')
-      .eq('id', memberId)
-      .single();
+    const [memberInfo] = await db
+      .select({ id: storeUsers.id, user_id: storeUsers.user_id, store_id: storeUsers.store_id, role: storeUsers.role })
+      .from(storeUsers)
+      .where(eq(storeUsers.id, memberId))
+      .limit(1);
 
-    if (memberError || !memberInfo) {
+    if (!memberInfo) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 });
     }
 
     // Verificar si el usuario que hace la petición tiene permisos
-    const { data: userAccess, error: accessError } = await supabase
-      .from('store_users')
-      .select('role')
-      .eq('user_id', authUserId)
-      .eq('store_id', memberInfo.store_id)
-      .single();
+    const [userAccess] = await db
+      .select({ role: storeUsers.role })
+      .from(storeUsers)
+      .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, memberInfo.store_id!)))
+      .limit(1);
 
-    if (accessError || !userAccess) {
+    if (!userAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
     // Verificar si el usuario tiene rol suficiente para actualizar
-    if (!['owner', 'admin'].includes(userAccess.role)) {
+    if (!['owner', 'admin'].includes(userAccess.role!)) {
       return NextResponse.json({ error: 'You do not have permission to update team members' }, { status: 403 });
     }
 
@@ -62,20 +60,14 @@ export async function PATCH(
     }
 
     // Actualizar el rol del miembro
-    const { data: updatedMember, error: updateError } = await supabase
-      .from('store_users')
-      .update({ 
+    const [updatedMember] = await db
+      .update(storeUsers)
+      .set({
         role: role,
-        updated_at: new Date().toISOString()
+        updated_at: new Date()
       })
-      .eq('id', memberId)
-      .select()
-      .single();
-
-    if (updateError) {
-      console.error('Error updating team member:', updateError);
-      return NextResponse.json({ error: 'Error updating team member' }, { status: 500 });
-    }
+      .where(eq(storeUsers.id, memberId))
+      .returning();
 
     return NextResponse.json({
       success: true,
@@ -96,39 +88,35 @@ export async function DELETE(
     const memberId = (await params).id;
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
+
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Obtener información del miembro a eliminar
-    const { data: memberInfo, error: memberError } = await supabase
-      .from('store_users')
-      .select('id, user_id, store_id, role')
-      .eq('id', memberId)
-      .single();
+    const [memberInfo] = await db
+      .select({ id: storeUsers.id, user_id: storeUsers.user_id, store_id: storeUsers.store_id, role: storeUsers.role })
+      .from(storeUsers)
+      .where(eq(storeUsers.id, memberId))
+      .limit(1);
 
-    if (memberError || !memberInfo) {
+    if (!memberInfo) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 });
     }
 
     // Verificar si el usuario que hace la petición tiene permisos
-    const { data: userAccess, error: accessError } = await supabase
-      .from('store_users')
-      .select('role')
-      .eq('user_id', authUserId)
-      .eq('store_id', memberInfo.store_id)
-      .single();
+    const [userAccess] = await db
+      .select({ role: storeUsers.role })
+      .from(storeUsers)
+      .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, memberInfo.store_id!)))
+      .limit(1);
 
-    if (accessError || !userAccess) {
+    if (!userAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
     // Verificar si el usuario tiene rol suficiente para eliminar
-    if (!['owner', 'admin'].includes(userAccess.role)) {
+    if (!['owner', 'admin'].includes(userAccess.role!)) {
       return NextResponse.json({ error: 'You do not have permission to remove team members' }, { status: 403 });
     }
 
@@ -143,15 +131,7 @@ export async function DELETE(
     }
 
     // Eliminar al miembro
-    const { error: deleteError } = await supabase
-      .from('store_users')
-      .delete()
-      .eq('id', memberId);
-
-    if (deleteError) {
-      console.error('Error removing team member:', deleteError);
-      return NextResponse.json({ error: 'Error removing team member' }, { status: 500 });
-    }
+    await db.delete(storeUsers).where(eq(storeUsers.id, memberId));
 
     return NextResponse.json({
       success: true,

@@ -1,47 +1,45 @@
 // src/app/api/sheets/test/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { storeUsers, stores, items, trackedItemsConfig } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
   try {
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
+
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // Obtener el ID de la tienda seleccionada
     const selectedStoreId = (await cookies()).get('selected_store_id')?.value;
-    
+
     if (!selectedStoreId) {
       return NextResponse.json({ error: 'No store selected' }, { status: 400 });
     }
 
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Verificar si el usuario tiene acceso a esta tienda
-    const { data: userAccess, error: accessError } = await supabase
-      .from('store_users')
-      .select('role')
-      .eq('user_id', authUserId)
-      .eq('store_id', selectedStoreId)
-      .single();
+    const [userAccess] = await db.select({ role: storeUsers.role })
+      .from(storeUsers)
+      .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, selectedStoreId)))
+      .limit(1);
 
-    if (accessError || !userAccess) {
+    if (!userAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
     // Obtener información de la tienda
-    const { data: storeData, error: storeError } = await supabase
-      .from('stores')
-      .select('gsheets_api_key, store_id')
-      .eq('id', selectedStoreId)
-      .single();
+    const [storeData] = await db.select({
+      gsheets_api_key: stores.gsheets_api_key,
+      store_id: stores.store_id,
+    }).from(stores)
+      .where(eq(stores.id, selectedStoreId))
+      .limit(1);
 
-    if (storeError || !storeData) {
+    if (!storeData) {
       return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
@@ -50,33 +48,27 @@ export async function GET(request: NextRequest) {
     }
 
     // Obtener datos de prueba para verificar que todo funciona
-    const { data: items, error: itemsError } = await supabase
-      .from('items')
-      .select('id, item_id, title')
-      .eq('store_id', selectedStoreId)
+    const testItems = await db.select({
+      id: items.id,
+      item_id: items.item_id,
+      title: items.title,
+    }).from(items)
+      .where(eq(items.store_id, selectedStoreId))
       .limit(5);
 
-    if (itemsError) {
-      console.error('Error fetching test items:', itemsError);
-      return NextResponse.json({ error: 'Error fetching test data' }, { status: 500 });
-    }
-
-    const { data: trackedItems, error: trackedError } = await supabase
-      .from('tracked_items_config')
-      .select('id, item_id, notes')
-      .eq('store_id', selectedStoreId)
+    const trackedItems = await db.select({
+      id: trackedItemsConfig.id,
+      item_id: trackedItemsConfig.item_id,
+      notes: trackedItemsConfig.notes,
+    }).from(trackedItemsConfig)
+      .where(eq(trackedItemsConfig.store_id, selectedStoreId))
       .limit(5);
-
-    if (trackedError) {
-      console.error('Error fetching test tracked items:', trackedError);
-      return NextResponse.json({ error: 'Error fetching test data' }, { status: 500 });
-    }
 
     return NextResponse.json({
       success: true,
       message: 'Connection test successful',
       storeId: storeData.store_id,
-      items,
+      items: testItems,
       tracked_items: trackedItems
     });
   } catch (error) {

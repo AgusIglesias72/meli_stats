@@ -1,6 +1,8 @@
 // src/app/api/stores/connect/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { stores, storeUsers } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
 // POST: Conecta una nueva tienda de Mercado Libre
@@ -8,17 +10,17 @@ export async function POST(request: NextRequest) {
   try {
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
+
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
+
     // Obtener datos de la solicitud
-    const { 
-      code, 
-      redirect_uri = process.env.NEXT_PUBLIC_MERCADOLIBRE_REDIRECT_URI 
+    const {
+      code,
+      redirect_uri = process.env.NEXT_PUBLIC_MERCADOLIBRE_REDIRECT_URI
     } = await request.json();
-    
+
     if (!code) {
       return NextResponse.json({ error: 'Authorization code is required' }, { status: 400 });
     }
@@ -42,14 +44,14 @@ export async function POST(request: NextRequest) {
     if (!mlResponse.ok) {
       const errorData = await mlResponse.json();
       console.error('Error exchanging code for token:', errorData);
-      return NextResponse.json({ 
-        error: 'Error connecting to Mercado Libre API', 
-        details: errorData 
+      return NextResponse.json({
+        error: 'Error connecting to Mercado Libre API',
+        details: errorData
       }, { status: 500 });
     }
 
     const mlData = await mlResponse.json();
-    
+
     // Obtener información del usuario de Mercado Libre
     const userResponse = await fetch('https://api.mercadolibre.com/users/me', {
       headers: {
@@ -59,8 +61,8 @@ export async function POST(request: NextRequest) {
 
     if (!userResponse.ok) {
       console.error('Error fetching user data from Mercado Libre');
-      return NextResponse.json({ 
-        error: 'Error fetching user data from Mercado Libre' 
+      return NextResponse.json({
+        error: 'Error fetching user data from Mercado Libre'
       }, { status: 500 });
     }
 
@@ -70,97 +72,81 @@ export async function POST(request: NextRequest) {
     const expiryDate = new Date();
     expiryDate.setSeconds(expiryDate.getSeconds() + mlData.expires_in);
 
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Verificar si la tienda ya existe
-    const { data: existingStore } = await supabase
-      .from('stores')
-      .select('id')
-      .eq('store_id', userData.id)
+    const existingStore = await db
+      .select({ id: stores.id })
+      .from(stores)
+      .where(eq(stores.store_id, userData.id))
       .limit(1);
 
     let storeId;
-    
+
     if (existingStore && existingStore.length > 0) {
       // Si la tienda ya existe, actualizarla
-      const { data: updatedStore, error: updateError } = await supabase
-        .from('stores')
-        .update({
+      const [updatedStore] = await db
+        .update(stores)
+        .set({
           access_token: mlData.access_token,
           refresh_token: mlData.refresh_token,
-          token_expiry: expiryDate.toISOString(),
-          updated_at: new Date().toISOString()
+          token_expiry: expiryDate,
+          updated_at: new Date()
         })
-        .eq('id', existingStore[0].id)
-        .select()
-        .single();
+        .where(eq(stores.id, existingStore[0].id))
+        .returning();
 
-      if (updateError) {
-        console.error('Error updating store:', updateError);
+      if (!updatedStore) {
+        console.error('Error updating store');
         return NextResponse.json({ error: 'Error updating store' }, { status: 500 });
       }
-      
+
       storeId = updatedStore.id;
-      
+
       // Verificar si el usuario ya tiene acceso a esta tienda
-      const { data: existingAccess } = await supabase
-        .from('store_users')
-        .select('id, role')
-        .eq('user_id', authUserId)
-        .eq('store_id', storeId)
+      const existingAccess = await db
+        .select({ id: storeUsers.id, role: storeUsers.role })
+        .from(storeUsers)
+        .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, storeId)))
         .limit(1);
-        
+
       if (!existingAccess || existingAccess.length === 0) {
         // Si el usuario no tiene acceso, darle acceso como propietario
-        const { error: accessError } = await supabase
-          .from('store_users')
-          .insert({
+        await db
+          .insert(storeUsers)
+          .values({
             user_id: authUserId,
             store_id: storeId,
             role: 'owner'
           });
-          
-        if (accessError) {
-          console.error('Error granting access to store:', accessError);
-          return NextResponse.json({ error: 'Error granting access to store' }, { status: 500 });
-        }
       }
     } else {
       // Si la tienda no existe, crearla
-      const { data: newStore, error: storeError } = await supabase
-        .from('stores')
-        .insert({
+      const [newStore] = await db
+        .insert(stores)
+        .values({
           store_id: userData.id,
           name: userData.nickname || `Tienda ${userData.id}`,
           ml_user_id: userData.id,
           access_token: mlData.access_token,
           refresh_token: mlData.refresh_token,
-          token_expiry: expiryDate.toISOString()
+          token_expiry: expiryDate
         })
-        .select()
-        .single();
+        .returning();
 
-      if (storeError) {
-        console.error('Error creating store:', storeError);
+      if (!newStore) {
+        console.error('Error creating store');
         return NextResponse.json({ error: 'Error creating store' }, { status: 500 });
       }
-      
+
       storeId = newStore.id;
-      
+
       // Dar acceso al usuario como propietario
-      const { error: accessError } = await supabase
-        .from('store_users')
-        .insert({
+      await db
+        .insert(storeUsers)
+        .values({
           user_id: authUserId,
           store_id: storeId,
           role: 'owner'
         });
-        
-      if (accessError) {
-        console.error('Error granting access to store:', accessError);
-        return NextResponse.json({ error: 'Error granting access to store' }, { status: 500 });
-      }
     }
 
     // Establecer cookies para mantener la sesión
@@ -170,7 +156,7 @@ export async function POST(request: NextRequest) {
           httpOnly: true,
           secure: process.env.NODE_ENV === 'production'
       });
-  
+
     (await cookies()).set('ml_user_id', userData.id, {
           path: '/',
           maxAge: 60 * 60 * 24,
@@ -180,7 +166,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: existingStore ? 'Store updated successfully' : 'Store connected successfully',
+      message: existingStore && existingStore.length > 0 ? 'Store updated successfully' : 'Store connected successfully',
       store_id: storeId
     });
   } catch (error) {

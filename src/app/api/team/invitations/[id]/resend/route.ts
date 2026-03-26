@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { storeUsers, invitations } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 
 // src/app/api/team/invitations/[id]/resend/route.ts
@@ -11,39 +13,35 @@ export async function POST(
     const invitationId = (await params).id;
     // Verificar autenticación
     const authUserId = (await cookies()).get('auth_user_id')?.value;
-    
+
     if (!authUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Crear conexión a Supabase
-    const supabase = createServerSupabaseClient();
-    
     // Obtener información de la invitación
-    const { data: invitationInfo, error: invitationError } = await supabase
-      .from('invitations')
-      .select('id, store_id, email, token, role')
-      .eq('id', invitationId)
-      .single();
+    const [invitationInfo] = await db
+      .select({ id: invitations.id, store_id: invitations.store_id, email: invitations.email, token: invitations.token, role: invitations.role })
+      .from(invitations)
+      .where(eq(invitations.id, invitationId))
+      .limit(1);
 
-    if (invitationError || !invitationInfo) {
+    if (!invitationInfo) {
       return NextResponse.json({ error: 'Invitation not found' }, { status: 404 });
     }
 
     // Verificar si el usuario tiene acceso a esta tienda
-    const { data: userAccess, error: accessError } = await supabase
-      .from('store_users')
-      .select('role')
-      .eq('user_id', authUserId)
-      .eq('store_id', invitationInfo.store_id)
-      .single();
+    const [userAccess] = await db
+      .select({ role: storeUsers.role })
+      .from(storeUsers)
+      .where(and(eq(storeUsers.user_id, authUserId), eq(storeUsers.store_id, invitationInfo.store_id!)))
+      .limit(1);
 
-    if (accessError || !userAccess) {
+    if (!userAccess) {
       return NextResponse.json({ error: 'Access denied to this store' }, { status: 403 });
     }
 
     // Verificar si el usuario tiene rol suficiente para reenviar invitaciones
-    if (!['owner', 'admin'].includes(userAccess.role)) {
+    if (!['owner', 'admin'].includes(userAccess.role!)) {
       return NextResponse.json({ error: 'You do not have permission to resend invitations' }, { status: 403 });
     }
 
@@ -52,18 +50,13 @@ export async function POST(
     expiryDate.setDate(expiryDate.getDate() + 7);
 
     // Actualizar la fecha de expiración
-    const { error: updateError } = await supabase
-      .from('invitations')
-      .update({
-        expires_at: expiryDate.toISOString(),
-        updated_at: new Date().toISOString()
+    await db
+      .update(invitations)
+      .set({
+        expires_at: expiryDate,
+        updated_at: new Date()
       })
-      .eq('id', invitationId);
-
-    if (updateError) {
-      console.error('Error updating invitation:', updateError);
-      return NextResponse.json({ error: 'Error resending invitation' }, { status: 500 });
-    }
+      .where(eq(invitations.id, invitationId));
 
     // TODO: Reenviar el email con el enlace de invitación
     // Esta parte requeriría un servicio de envío de emails
