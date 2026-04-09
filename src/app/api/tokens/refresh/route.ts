@@ -4,17 +4,8 @@ import { db } from '@/lib/db';
 import { stores } from '@/lib/db/schema';
 import { eq, lt } from 'drizzle-orm';
 
-export async function POST(request: NextRequest) {
+async function refreshTokens(hoursBeforeExpiry: number = 2) {
   try {
-    // Verificar clave API para seguridad
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.split(' ')[1] !== process.env.NEXT_PUBLIC_API_SECRET_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Obtener parámetros (opcional: horas antes de vencimiento)
-    const { hoursBeforeExpiry = 2 } = await request.json().catch(() => ({}));
-
     // Calcular timestamp para tokens a punto de expirar
     const expiryThreshold = new Date();
     expiryThreshold.setHours(expiryThreshold.getHours() + hoursBeforeExpiry);
@@ -77,12 +68,9 @@ export async function POST(request: NextRequest) {
         await db.update(stores).set({
           access_token: tokenData.access_token,
           refresh_token: tokenData.refresh_token,
-          token_expiry: newExpiryDate.toISOString(),
-          updated_at: new Date().toISOString(),
-          is_connected: true,
-          connection_status: 'connected',
-          last_token_refresh: new Date().toISOString()
-        } as any).where(eq(stores.id, store.id));
+          token_expiry: newExpiryDate,
+          updated_at: new Date(),
+        }).where(eq(stores.id, store.id));
 
         // Éxito
         results.push({
@@ -123,4 +111,34 @@ export async function POST(request: NextRequest) {
       message: error.message
     }, { status: 500 });
   }
+}
+
+function checkAuth(request: NextRequest): boolean {
+  const authHeader = request.headers.get('authorization');
+  const apiSecret = process.env.NEXT_PUBLIC_API_SECRET_KEY;
+
+  if (authHeader && apiSecret && authHeader === `Bearer ${apiSecret}`) {
+    return true;
+  } else if (authHeader) {
+    return false;
+  }
+  // Sin header = llamada de Vercel Cron
+  return true;
+}
+
+// GET: Vercel Cron
+export async function GET(request: NextRequest) {
+  if (!checkAuth(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  return refreshTokens();
+}
+
+// POST: llamadas manuales
+export async function POST(request: NextRequest) {
+  if (!checkAuth(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const { hoursBeforeExpiry = 2 } = await request.json().catch(() => ({}));
+  return refreshTokens(hoursBeforeExpiry);
 }

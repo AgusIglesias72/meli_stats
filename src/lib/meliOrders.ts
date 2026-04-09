@@ -311,7 +311,7 @@ export async function fetchOrderDetails(orderId: string, userId: string, accessT
         if (shippingResponse.ok) {
           const shippingData = await shippingResponse.json();
           orderDetails.shipping_id = shippingData.id;
-          orderDetails.buffer_date = shippingData.shipping_option.buffering.date || null;
+          orderDetails.buffer_date = shippingData.shipping_option?.buffering?.date || null;
           orderDetails.shipping_mode = shippingData.mode || '';
           orderDetails.shipping_logistic_type = shippingData.logistic_type || '';
           orderDetails.shipping_status = shippingData.status || '';
